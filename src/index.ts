@@ -40,10 +40,11 @@ app.use("/static/uploads", express.static(uploadRoot));
 // ─── SWAGGER ─────────────────────────────────────────────────────────────────
 // Usa CDN (unpkg) para os assets do Swagger UI em vez de express.static,
 // pois o filesystem serverless da Vercel não serve arquivos de node_modules.
-app.get("/api-docs", (_req, res) => {
-  const specUrl = process.env.BASE_URL
-    ? `${process.env.BASE_URL}/api-docs.json`
-    : "/api-docs.json";
+app.get("/api-docs", (req, res) => {
+  // Determina a URL base a partir do próprio request — funciona em qualquer ambiente
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  const specUrl = `${protocol}://${host}/api-docs.json`;
   res.setHeader("Content-Type", "text/html");
   res.send(`<!DOCTYPE html>
 <html lang="pt-BR">
