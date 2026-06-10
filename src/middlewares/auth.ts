@@ -26,7 +26,7 @@ export const authMiddleware = (optional = false) => {
       : authHeader;
 
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY || "") as any;
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || "") as any;
       req.user = {
         id: parseInt(decoded.sub),
         papel: decoded.papel,

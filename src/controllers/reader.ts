@@ -30,7 +30,7 @@ const getOptionalUserId = (req: Request): number | null => {
   if (!authHeader) return null;
   const token = authHeader.startsWith("Bearer ") ? authHeader.substring(7) : authHeader;
   try {
-    const decoded = require("jsonwebtoken").verify(token, process.env.JWT_SECRET_KEY || "") as any;
+    const decoded = require("jsonwebtoken").verify(token, process.env.JWT_SECRET || "") as any;
     return decoded.sub ? parseInt(decoded.sub) : null;
   } catch (err) {
     return null;

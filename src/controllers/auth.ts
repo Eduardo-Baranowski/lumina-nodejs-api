@@ -65,7 +65,7 @@ authRouter.post("/login", async (req: Request, res: Response) => {
         papel: user.papel,
         type: "access",
       },
-      process.env.JWT_SECRET_KEY || "",
+      process.env.JWT_SECRET || "",
       {
         expiresIn: "30d", // Generous token expiration for mobile app
       }
