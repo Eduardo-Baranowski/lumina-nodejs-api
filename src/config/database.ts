@@ -16,11 +16,19 @@ import * as dotenv from "dotenv";
 
 dotenv.config();
 
+const isProduction = process.env.NODE_ENV === "production";
+
 export const AppDataSource = new DataSource({
   type: "postgres",
   url: process.env.DATABASE_URL,
   synchronize: false, // DO NOT sync schema to avoid corrupting/overwriting the database
   logging: false,
+  // SSL obrigatório para Supabase; desabilitado em dev local
+  ssl: isProduction ? { rejectUnauthorized: false } : false,
+  // Em serverless (Vercel), manter pool mínimo para evitar esgotar conexões
+  extra: isProduction
+    ? { max: 2, connectionTimeoutMillis: 10000, idleTimeoutMillis: 30000 }
+    : {},
   entities: [
     User,
     Livro,
@@ -38,3 +46,4 @@ export const AppDataSource = new DataSource({
   subscribers: [],
   migrations: [],
 });
+

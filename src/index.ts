@@ -27,7 +27,13 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ─── STATIC FILES ─────────────────────────────────────────────────────────────
-const uploadRoot = path.join(__dirname, "../static/uploads");
+// Em produção (Vercel), o filesystem é efêmero — usamos /tmp para uploads temporários.
+// Em dev local, usamos a pasta static/uploads dentro do projeto.
+const uploadRoot =
+  process.env.NODE_ENV === "production"
+    ? "/tmp/uploads"
+    : path.join(__dirname, "../static/uploads");
+
 fs.mkdirSync(path.join(uploadRoot, "users"), { recursive: true });
 fs.mkdirSync(path.join(uploadRoot, "books"), { recursive: true });
 app.use("/static/uploads", express.static(uploadRoot));
@@ -97,22 +103,48 @@ async function criarAdminInicial(): Promise<void> {
   }
 }
 
-// ─── BOOTSTRAP ────────────────────────────────────────────────────────────────
-const PORT = parseInt(process.env.PORT || "5000", 10);
-const HOST = "0.0.0.0";
+// ─── DB INIT ──────────────────────────────────────────────────────────────────
+// Inicializa o banco de dados e retorna o app Express.
+// Em serverless (Vercel), a inicialização é lazy — reutiliza a conexão entre
+// invocações quentes para não criar novas conexões desnecessariamente.
+let dbInitialized = false;
 
-AppDataSource.initialize()
-  .then(async () => {
-    console.log("✓ Banco de dados conectado (PostgreSQL).");
-    await criarAdminInicial();
-    app.listen(PORT, HOST, () => {
-      console.log(`✓ API rodando em http://${HOST}:${PORT}`);
-      console.log(
-        `  (emulador Genymotion: http://10.0.3.2:${PORT})`
-      );
+export async function initializeDb(): Promise<void> {
+  if (dbInitialized && AppDataSource.isInitialized) return;
+  await AppDataSource.initialize();
+  await criarAdminInicial();
+  dbInitialized = true;
+}
+
+// ─── SERVERLESS HANDLER (Vercel) ──────────────────────────────────────────────
+// Vercel usa o export default como handler HTTP.
+// O wrapper garante que o banco está conectado antes de cada request.
+import { Request as ExpReq, Response as ExpRes } from "express";
+
+const handler = async (req: ExpReq, res: ExpRes) => {
+  await initializeDb();
+  app(req, res);
+};
+
+export default handler;
+
+// ─── LOCAL DEV SERVER ─────────────────────────────────────────────────────────
+// Em desenvolvimento local, iniciamos o servidor normalmente.
+if (process.env.NODE_ENV !== "production") {
+  const PORT = parseInt(process.env.PORT || "5000", 10);
+  const HOST = "0.0.0.0";
+
+  initializeDb()
+    .then(() => {
+      app.listen(PORT, HOST, () => {
+        console.log(`✓ API rodando em http://${HOST}:${PORT}`);
+        console.log(
+          `  (emulador Genymotion: http://10.0.3.2:${PORT})`
+        );
+      });
+    })
+    .catch((err) => {
+      console.error("✗ Falha ao conectar no banco de dados:", err);
+      process.exit(1);
     });
-  })
-  .catch((err) => {
-    console.error("✗ Falha ao conectar no banco de dados:", err);
-    process.exit(1);
-  });
+}
