@@ -1,0 +1,42 @@
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn } from "typeorm";
+import { User } from "./User";
+
+@Entity("livro")
+export class Livro {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ type: "integer" })
+  editor_id: number;
+
+  @Column({ type: "varchar", length: 200 })
+  titulo: string;
+
+  @Column({ type: "varchar", length: 200 })
+  autor: string;
+
+  @Column({ type: "numeric", precision: 10, scale: 2, default: "0.00" })
+  preco: string;
+
+  @Column({ type: "integer", default: 0 })
+  estoque: number;
+
+  @Column({ type: "varchar", length: 100, nullable: true })
+  genero: string | null;
+
+  @Column({ type: "varchar", length: 30, nullable: true, default: "novo" })
+  condicao: string | null;
+
+  @Column({ type: "text", nullable: true })
+  descricao: string | null;
+
+  @Column({ type: "varchar", length: 255, nullable: true })
+  imagem: string | null;
+
+  @CreateDateColumn({ type: "timestamp" })
+  data_cadastro: Date;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: "editor_id" })
+  editor: User;
+}
