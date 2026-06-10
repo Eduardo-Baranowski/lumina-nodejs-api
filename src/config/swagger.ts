@@ -11,6 +11,7 @@ const options: swaggerJsdoc.Options = {
         "Todos os endpoints protegidos exigem o header `Authorization: Bearer <token>`.",
     },
     servers: [
+      { url: "/", description: "Servidor atual (produção/staging)" },
       { url: "http://localhost:5000", description: "Desenvolvimento local" },
       { url: "http://10.0.3.2:5000", description: "Emulador Genymotion" },
     ],
