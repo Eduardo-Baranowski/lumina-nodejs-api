@@ -7,7 +7,6 @@ import cors from "cors";
 import * as path from "path";
 import * as fs from "fs";
 import * as bcrypt from "bcryptjs";
-import swaggerUi from "swagger-ui-express";
 import { swaggerSpec } from "./config/swagger";
 
 import { AppDataSource } from "./config/database";
@@ -39,11 +38,41 @@ fs.mkdirSync(path.join(uploadRoot, "books"), { recursive: true });
 app.use("/static/uploads", express.static(uploadRoot));
 
 // ─── SWAGGER ─────────────────────────────────────────────────────────────────
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
-  customSiteTitle: "Lumina API Docs",
-  customCss: ".swagger-ui .topbar { background-color: #1a1a2e; }",
-  swaggerOptions: { persistAuthorization: true },
-}));
+// Usa CDN (unpkg) para os assets do Swagger UI em vez de express.static,
+// pois o filesystem serverless da Vercel não serve arquivos de node_modules.
+app.get("/api-docs", (_req, res) => {
+  const specUrl = process.env.BASE_URL
+    ? `${process.env.BASE_URL}/api-docs.json`
+    : "/api-docs.json";
+  res.setHeader("Content-Type", "text/html");
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Lumina API Docs</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    body { margin: 0; }
+    .swagger-ui .topbar { background-color: #1a1a2e !important; }
+  </style>
+</head>
+<body>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+  <script>
+    SwaggerUIBundle({
+      url: "${specUrl}",
+      dom_id: "#swagger-ui",
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIStandalonePreset],
+      layout: "StandaloneLayout",
+      persistAuthorization: true,
+    });
+  </script>
+</body>
+</html>`);
+});
 app.get("/api-docs.json", (_req, res) => {
   res.setHeader("Content-Type", "application/json");
   res.send(swaggerSpec);
