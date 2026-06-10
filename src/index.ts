@@ -104,16 +104,23 @@ async function criarAdminInicial(): Promise<void> {
 }
 
 // ─── DB INIT ──────────────────────────────────────────────────────────────────
-// Inicializa o banco de dados e retorna o app Express.
-// Em serverless (Vercel), a inicialização é lazy — reutiliza a conexão entre
-// invocações quentes para não criar novas conexões desnecessariamente.
-let dbInitialized = false;
+// Em serverless, múltiplas invocações podem chegar simultaneamente antes da
+// conexão estar pronta. Usamos uma promise única compartilhada para evitar o
+// CannotConnectAlreadyConnectedError do TypeORM.
+let dbInitPromise: Promise<void> | null = null;
 
 export async function initializeDb(): Promise<void> {
-  if (dbInitialized && AppDataSource.isInitialized) return;
-  await AppDataSource.initialize();
-  await criarAdminInicial();
-  dbInitialized = true;
+  if (AppDataSource.isInitialized) return;
+  if (!dbInitPromise) {
+    dbInitPromise = AppDataSource.initialize()
+      .then(() => criarAdminInicial())
+      .catch((err) => {
+        // Reseta a promise para permitir retry em caso de falha
+        dbInitPromise = null;
+        throw err;
+      });
+  }
+  return dbInitPromise;
 }
 
 // ─── SERVERLESS HANDLER (Vercel) ──────────────────────────────────────────────
