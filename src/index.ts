@@ -15,6 +15,7 @@ import { authRouter } from "./controllers/auth";
 import { adminRouter } from "./controllers/admin";
 import { editorRouter } from "./controllers/editor";
 import { readerRouter } from "./controllers/reader";
+import { migrateAllUserImages } from "./utils/image-migration";
 
 const app = express();
 
@@ -151,6 +152,13 @@ export async function initializeDb(): Promise<void> {
   if (!dbInitPromise) {
     dbInitPromise = AppDataSource.initialize()
       .then(() => criarAdminInicial())
+      .then(async () => {
+        // Migrate old images to Cloudinary in production
+        if (process.env.VERCEL === "1" && process.env.CLOUDINARY_CLOUD_NAME) {
+          console.log("🔄 Starting image migration to Cloudinary...");
+          await migrateAllUserImages();
+        }
+      })
       .catch((err) => {
         // Reseta a promise para permitir retry em caso de falha
         dbInitPromise = null;
