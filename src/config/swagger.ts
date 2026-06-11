@@ -358,6 +358,103 @@ const options: swaggerJsdoc.Options = {
           },
         },
       },
+      "/reader/profile": {
+        put: {
+          tags: ["Reader"],
+          summary: "Atualizar perfil do usuário autenticado",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    nome: { type: "string", example: "João Silva" },
+                    headline: { type: "string", example: "Leitor ávido de ficção científica" },
+                    bio: { type: "string", example: "Apaixonado por literatura e boas histórias" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Perfil atualizado com sucesso" },
+            400: { description: "Dados inválidos" },
+            401: { description: "Não autenticado" },
+          },
+        },
+      },
+      "/reader/profile/photo": {
+        post: {
+          tags: ["Reader"],
+          summary: "Upload da foto de perfil",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "multipart/form-data": {
+                schema: {
+                  type: "object",
+                  required: ["imagem"],
+                  properties: {
+                    imagem: {
+                      type: "string",
+                      format: "binary",
+                      description: "Arquivo de imagem (JPG, PNG, máximo 5MB)",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: {
+              description: "Foto atualizada com sucesso",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      message: { type: "string", example: "Foto atualizada" },
+                      imagem_url: { type: "string", example: "http://api.example.com/static/uploads/users/abc123.jpg" },
+                    },
+                  },
+                },
+              },
+            },
+            400: { description: "Nenhum arquivo enviado" },
+            401: { description: "Não autenticado" },
+          },
+        },
+      },
+      "/reader/profile/password": {
+        put: {
+          tags: ["Reader"],
+          summary: "Alterar senha do usuário",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["senha_atual", "senha_nova"],
+                  properties: {
+                    senha_atual: { type: "string", example: "senha_antiga_123" },
+                    senha_nova: { type: "string", example: "senha_nova_456" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            200: { description: "Senha alterada com sucesso" },
+            400: { description: "Senha atual incorreta" },
+            401: { description: "Não autenticado" },
+          },
+        },
+      },
       // ─── EDITOR ────────────────────────────────────────────────────────────────
       "/editor/books": {
         get: {
