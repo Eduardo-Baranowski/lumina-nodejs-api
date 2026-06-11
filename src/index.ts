@@ -41,10 +41,8 @@ try {
   console.warn(`Warning: Could not create upload directories: ${err}`);
 }
 
-// Servir uploads em ambiente local apenas (em serverless, /tmp é efêmero)
-if (!isServerless) {
-  app.use("/static/uploads", express.static(uploadRoot));
-}
+// Sempre servir uploads (em Vercel, usa /tmp; em local, usa static/uploads)
+app.use("/static/uploads", express.static(uploadRoot, { fallthrough: true }));
 
 // ─── SWAGGER ─────────────────────────────────────────────────────────────────
 // Usa CDN (unpkg) para os assets do Swagger UI em vez de express.static,

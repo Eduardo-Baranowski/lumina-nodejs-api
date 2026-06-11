@@ -25,16 +25,22 @@ const UPLOAD_ROOT = isServerless
 
 /**
  * Builds the full URL for a stored image.
- * When `req` is available, derives the host from the request (works for any
- * deployment address). When `req` is null/undefined (e.g. called from a
- * helper function without a live request), falls back to BASE_URL env var or
- * a sensible localhost default so that the app never crashes.
+ * - If the path is already a full URL (starts with http/https/data), returns it as-is
+ * - If it's a relative path, builds a /static/uploads URL
+ * When `req` is available, derives the host from the request. When `req` is
+ * null/undefined, falls back to BASE_URL env var or localhost.
  */
 export const getImageUrl = (
   req: Request | null | undefined,
   relPath: string | null | undefined
 ): string | null => {
   if (!relPath) return null;
+
+  // If it's already a full URL (from Cloudinary or similar), return as-is
+  if (relPath.startsWith("http://") || relPath.startsWith("https://") || relPath.startsWith("data:")) {
+    return relPath;
+  }
+
   const normalizedPath = relPath.replace(/\\/g, "/").replace(/^\//, "");
 
   let base: string;
