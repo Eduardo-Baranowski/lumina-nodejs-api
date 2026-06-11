@@ -193,7 +193,7 @@ editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, re
   try {
     let imagem_path: string | null = null;
     if (req.file) {
-      imagem_path = saveImage(req.file, "books");
+      imagem_path = await saveImage(req.file, "books");
     } else if (open_library_cover_id) {
       const coverIdInt = parseInt(open_library_cover_id);
       if (!isNaN(coverIdInt)) {
@@ -273,7 +273,7 @@ editorRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest,
       if (livro.imagem) {
         deleteImage(livro.imagem);
       }
-      livro.imagem = saveImage(req.file, "books");
+      livro.imagem = await saveImage(req.file, "books");
     } else if (body.open_library_cover_id) {
       const coverIdInt = parseInt(body.open_library_cover_id);
       if (!isNaN(coverIdInt)) {

@@ -1869,7 +1869,7 @@ readerRouter.post("/profile/photo", authMiddleware(), upload.single("imagem"), a
       deleteImage(user.imagem);
     }
 
-    user.imagem = saveImage(req.file, "users");
+    user.imagem = await saveImage(req.file, "users");
     await userRepo.save(user);
 
     return res.status(200).json({

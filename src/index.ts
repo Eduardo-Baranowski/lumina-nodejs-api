@@ -28,14 +28,23 @@ app.use(express.urlencoded({ extended: true }));
 // ─── STATIC FILES ─────────────────────────────────────────────────────────────
 // Em produção (Vercel), o filesystem é efêmero — usamos /tmp para uploads temporários.
 // Em dev local, usamos a pasta static/uploads dentro do projeto.
-const uploadRoot =
-  process.env.NODE_ENV === "production"
-    ? "/tmp/uploads"
-    : path.join(__dirname, "../static/uploads");
+const isServerless = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
+const uploadRoot = isServerless
+  ? "/tmp/uploads"
+  : path.join(__dirname, "../static/uploads");
 
-fs.mkdirSync(path.join(uploadRoot, "users"), { recursive: true });
-fs.mkdirSync(path.join(uploadRoot, "books"), { recursive: true });
-app.use("/static/uploads", express.static(uploadRoot));
+try {
+  fs.mkdirSync(path.join(uploadRoot, "users"), { recursive: true });
+  fs.mkdirSync(path.join(uploadRoot, "books"), { recursive: true });
+  console.log(`✓ Upload directories ready at: ${uploadRoot}`);
+} catch (err) {
+  console.warn(`Warning: Could not create upload directories: ${err}`);
+}
+
+// Servir uploads em ambiente local apenas (em serverless, /tmp é efêmero)
+if (!isServerless) {
+  app.use("/static/uploads", express.static(uploadRoot));
+}
 
 // ─── SWAGGER ─────────────────────────────────────────────────────────────────
 // Usa CDN (unpkg) para os assets do Swagger UI em vez de express.static,
