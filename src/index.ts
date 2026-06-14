@@ -15,7 +15,9 @@ import { authRouter } from "./controllers/auth";
 import { adminRouter } from "./controllers/admin";
 import { editorRouter } from "./controllers/editor";
 import { readerRouter } from "./controllers/reader";
+import { bookClubRouter } from "./controllers/bookClub";
 import { migrateAllUserImages } from "./utils/image-migration";
+import { runMigrations } from "./utils/runMigrations";
 
 const app = express();
 
@@ -92,6 +94,7 @@ app.use("/auth", authRouter);
 app.use("/admin", adminRouter);
 app.use("/editor", editorRouter);
 app.use("/reader", readerRouter);
+app.use("/reader/book-club", bookClubRouter);
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
 app.get("/health", (_req, res) => {
@@ -151,6 +154,7 @@ export async function initializeDb(): Promise<void> {
   if (AppDataSource.isInitialized) return;
   if (!dbInitPromise) {
     dbInitPromise = AppDataSource.initialize()
+      .then(() => runMigrations())
       .then(() => criarAdminInicial())
       .then(async () => {
         // Migrate old images to Cloudinary in production
