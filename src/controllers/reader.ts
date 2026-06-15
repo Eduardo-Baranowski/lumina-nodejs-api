@@ -11,6 +11,7 @@ import { Pedido } from "../entities/Pedido";
 import { ItemPedido } from "../entities/ItemPedido";
 import { FeedLike } from "../entities/FeedLike";
 import { FeedComment } from "../entities/FeedComment";
+import { Endereco } from "../entities/Endereco";
 import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage } from "../utils/image";
@@ -925,6 +926,7 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
             status: reading.status,
             nota: reading.nota,
             comentario: reading.comentario,
+            paginas_lidas: reading.paginas_lidas,
           };
         }
       }
@@ -936,6 +938,7 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
       autor: book.autor,
       preco: book.preco,
       estoque: book.estoque,
+      paginas: book.paginas,
       editor_id: book.editor_id,
       status_estoque: book.estoque <= 0 ? "esgotado" : book.estoque <= 3 ? "baixo" : "disponivel",
       descricao: book.descricao,
@@ -965,7 +968,7 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
 // 16. CREATE OR UPDATE READING LOG (Guarded & Leitor-Only)
 readerRouter.post("/readings", authMiddleware(), requireRole("leitor"), async (req: AuthRequest, res: Response) => {
   const leitor_id = req.user!.id;
-  const { livro_id, status = "lendo", nota, comentario } = req.body || {};
+  const { livro_id, status = "lendo", nota, comentario, paginas_lidas } = req.body || {};
 
   if (!livro_id) {
     return res.status(400).json({ message: "livro_id é obrigatório" });
@@ -982,6 +985,14 @@ readerRouter.post("/readings", authMiddleware(), requireRole("leitor"), async (r
       return res.status(400).json({ message: "nota deve ser entre 1 e 5" });
     }
     finalNota = notaInt;
+  }
+
+  let finalPaginasLidas = 0;
+  if (paginas_lidas !== undefined && paginas_lidas !== null) {
+    const parsed = parseInt(paginas_lidas);
+    if (!isNaN(parsed) && parsed >= 0) {
+      finalPaginasLidas = parsed;
+    }
   }
 
   const libroRepo = AppDataSource.getRepository(Livro);
@@ -1001,6 +1012,7 @@ readerRouter.post("/readings", authMiddleware(), requireRole("leitor"), async (r
       reading.status = status;
       reading.nota = finalNota;
       reading.comentario = comentario || null;
+      reading.paginas_lidas = finalPaginasLidas;
       msg = "Leitura atualizada";
       status_code = 200;
     } else {
@@ -1010,6 +1022,7 @@ readerRouter.post("/readings", authMiddleware(), requireRole("leitor"), async (r
       reading.status = status;
       reading.nota = finalNota;
       reading.comentario = comentario || null;
+      reading.paginas_lidas = finalPaginasLidas;
     }
 
     const saved = await lecturaRepo.save(reading);
@@ -1065,10 +1078,12 @@ readerRouter.get("/readings", authMiddleware(), async (req: AuthRequest, res: Re
           descricao: r.livro.descricao,
           imagem_url: getImageUrl(req, r.livro.imagem),
           editora: r.livro.editor ? r.livro.editor.nome : "",
+          paginas: r.livro.paginas,
         },
         status: r.status,
         nota: r.nota,
         comentario: r.comentario,
+        paginas_lidas: r.paginas_lidas,
         criado_em: r.criado_em ? r.criado_em.toISOString() : null,
         atualizado_em: r.atualizado_em ? r.atualizado_em.toISOString() : null,
       })),
@@ -1117,6 +1132,11 @@ readerRouter.put("/readings/:id", authMiddleware(), requireRole("leitor"), async
 
     if ("comentario" in data) {
       leitura.comentario = data.comentario || null;
+    }
+
+    if ("paginas_lidas" in data) {
+      const parsed = parseInt(data.paginas_lidas);
+      leitura.paginas_lidas = isNaN(parsed) ? 0 : parsed;
     }
 
     await lecturaRepo.save(leitura);
@@ -1952,3 +1972,52 @@ readerRouter.delete("/profile", authMiddleware(), async (req: AuthRequest, res: 
     return res.status(500).json({ message: "Erro interno no servidor" });
   }
 });
+
+// 14. GET READER ADDRESSES (Guarded)
+readerRouter.get("/addresses", authMiddleware(), async (req: AuthRequest, res: Response) => {
+  const current_id = req.user!.id;
+  const addressRepo = AppDataSource.getRepository(Endereco);
+
+  try {
+    const addresses = await addressRepo.find({
+      where: { user_id: current_id },
+      order: { criado_em: "DESC" },
+    });
+    return res.status(200).json(addresses);
+  } catch (err) {
+    console.error("Error fetching reader addresses:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// 15. POST READER ADDRESS (Guarded)
+readerRouter.post("/addresses", authMiddleware(), async (req: AuthRequest, res: Response) => {
+  const current_id = req.user!.id;
+  const addressRepo = AppDataSource.getRepository(Endereco);
+  const data = req.body || {};
+
+  const { label, rua, numero, bairro, cidade, estado, cep } = data;
+
+  if (!label || !rua || !numero || !bairro || !cidade || !estado || !cep) {
+    return res.status(400).json({ message: "Todos os campos do endereço são obrigatórios" });
+  }
+
+  try {
+    const address = new Endereco();
+    address.user_id = current_id;
+    address.label = label;
+    address.rua = rua;
+    address.numero = numero;
+    address.bairro = bairro;
+    address.cidade = cidade;
+    address.estado = estado;
+    address.cep = cep;
+
+    const saved = await addressRepo.save(address);
+    return res.status(201).json(saved);
+  } catch (err) {
+    console.error("Error creating reader address:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+

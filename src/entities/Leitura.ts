@@ -22,6 +22,9 @@ export class Leitura {
   @Column({ type: "text", nullable: true })
   comentario: string | null;
 
+  @Column({ type: "integer", default: 0 })
+  paginas_lidas: number;
+
   @CreateDateColumn({ type: "timestamp" })
   criado_em: Date;
 

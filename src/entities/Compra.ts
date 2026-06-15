@@ -16,9 +16,6 @@ export class Compra {
   @Column({ type: "integer", default: 1 })
   quantidade: number;
 
-  @Column({ type: "numeric", precision: 10, scale: 2 })
-  preco_pago: string;
-
   @Column({ type: "numeric", precision: 10, scale: 2, nullable: true })
   total: string | null;
 

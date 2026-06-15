@@ -33,6 +33,9 @@ export class Livro {
   @Column({ type: "varchar", length: 255, nullable: true })
   imagem: string | null;
 
+  @Column({ type: "integer", default: 0 })
+  paginas: number;
+
   @CreateDateColumn({ type: "timestamp" })
   data_cadastro: Date;
 

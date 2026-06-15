@@ -158,10 +158,11 @@ editorRouter.get("/books", async (req: AuthRequest, res: Response) => {
         condicao: b.condicao || "novo",
         preco: b.preco,
         estoque: b.estoque,
+        paginas: b.paginas,
         descricao: b.descricao,
         imagem: b.imagem,
         imagem_url: getImageUrl(req, b.imagem),
-        data_cadastro: b.data_cadastro.toISOString(),
+        data_cadastro: b.data_cadastro ? b.data_cadastro.toISOString() : null,
       })),
       total,
       page,
@@ -175,9 +176,10 @@ editorRouter.get("/books", async (req: AuthRequest, res: Response) => {
 
 editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
   const editor_id = req.user!.id;
-  const { titulo, autor, preco: rawPreco, genero, condicao, descricao, open_library_cover_id } = req.body || {};
+  const { titulo, autor, preco: rawPreco, genero, condicao, descricao, open_library_cover_id, paginas } = req.body || {};
 
   const estoque = parseInt(req.body.estoque || "0") || 0;
+  const paginasInt = parseInt(req.body.paginas || "0") || 0;
 
   if (estoque < 0) {
     return res.status(400).json({ message: "estoque deve ser maior ou igual a zero" });
@@ -208,6 +210,7 @@ editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, re
     novoLivro.autor = autor;
     novoLivro.preco = preco;
     novoLivro.estoque = estoque;
+    novoLivro.paginas = paginasInt;
     novoLivro.genero = genero || null;
     novoLivro.condicao = condicao || "novo";
     novoLivro.descricao = descricao || null;
@@ -248,6 +251,10 @@ editorRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest,
     if ("genero" in body) livro.genero = body.genero;
     if ("condicao" in body) livro.condicao = body.condicao || "novo";
     if ("descricao" in body) livro.descricao = body.descricao;
+    if ("paginas" in body) {
+      const paginasInt = parseInt(body.paginas);
+      livro.paginas = isNaN(paginasInt) ? 0 : paginasInt;
+    }
 
     if ("preco" in body) {
       const preco = parsePreco(body.preco);
