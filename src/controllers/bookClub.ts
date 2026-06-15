@@ -1,9 +1,12 @@
 import { Router, Response, Request } from "express";
 import { AppDataSource } from "../config/database";
+import { BookClub } from "../entities/BookClub";
+import { BookClubMember } from "../entities/BookClubMember";
 import { BookClubCycle } from "../entities/BookClubCycle";
 import { BookClubNomination } from "../entities/BookClubNomination";
 import { BookClubVote } from "../entities/BookClubVote";
 import { Livro } from "../entities/Livro";
+import { User } from "../entities/User";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl } from "../utils/image";
 
@@ -25,6 +28,10 @@ const MONTHS_PT = [
   "Dezembro",
 ];
 
+function generateInviteCode(): string {
+  return Math.random().toString(36).substring(2, 8).toUpperCase();
+}
+
 function cycleTitle(date: Date): string {
   return `${MONTHS_PT[date.getMonth()]} ${date.getFullYear()}`;
 }
@@ -39,10 +46,70 @@ function daysUntil(target: Date): number {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
 }
 
-async function getOrCreateActiveCycle(): Promise<BookClubCycle> {
+// Middleware de verificação de membro do clube
+async function checkClubMember(req: AuthRequest, res: Response, next: any) {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ message: "Não autorizado" });
+
+    // Admins do app têm acesso irrestrito
+    if (req.user?.papel === "admin") {
+      return next();
+    }
+
+    const member = await AppDataSource.getRepository(BookClubMember).findOneBy({
+      book_club_id: clubId,
+      user_id: userId,
+      status: "active",
+    });
+
+    if (!member) {
+      return res.status(403).json({ message: "Você não é membro ativo deste clube do livro" });
+    }
+
+    next();
+  } catch (err) {
+    res.status(500).json({ message: "Erro ao verificar permissão do clube" });
+  }
+}
+
+// Middleware de verificação de dono do clube
+async function checkClubOwner(req: AuthRequest, res: Response, next: any) {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const userId = req.user?.id;
+    if (!userId) return res.status(401).json({ message: "Não autorizado" });
+
+    // Admins do app podem gerenciar
+    if (req.user?.papel === "admin") {
+      return next();
+    }
+
+    const member = await AppDataSource.getRepository(BookClubMember).findOneBy({
+      book_club_id: clubId,
+      user_id: userId,
+      papel: "dono",
+      status: "active",
+    });
+
+    if (!member) {
+      return res.status(403).json({ message: "Apenas o dono do clube pode realizar esta ação" });
+    }
+
+    next();
+  } catch (err) {
+    res.status(500).json({ message: "Erro ao verificar permissão do clube" });
+  }
+}
+
+async function getOrCreateActiveCycle(clubId: number): Promise<BookClubCycle> {
   const repo = AppDataSource.getRepository(BookClubCycle);
   let cycle = await repo.findOne({
-    where: [{ status: "nominacao" }, { status: "votacao" }],
+    where: [
+      { book_club_id: clubId, status: "nominacao" },
+      { book_club_id: clubId, status: "votacao" },
+    ],
     order: { data_inicio: "DESC" },
   });
 
@@ -50,6 +117,7 @@ async function getOrCreateActiveCycle(): Promise<BookClubCycle> {
 
   const now = new Date();
   cycle = repo.create({
+    book_club_id: clubId,
     titulo: cycleTitle(now),
     status: "votacao",
     data_inicio: now,
@@ -149,10 +217,10 @@ async function performDraw(cycle: BookClubCycle): Promise<BookClubNomination | n
   return nominations.find((n) => n.id === winnerId) ?? null;
 }
 
-async function getFeaturedBook(req: Request) {
+async function getFeaturedBook(cycleId: number, req: Request) {
   const cycleRepo = AppDataSource.getRepository(BookClubCycle);
   const drawn = await cycleRepo.findOne({
-    where: { status: "sorteado" },
+    where: { status: "sorteado", book_club_id: cycleId },
     relations: ["nomination_vencedora", "nomination_vencedora.user", "nomination_vencedora.livro"],
     order: { data_sorteio: "DESC" },
   });
@@ -169,12 +237,360 @@ async function getFeaturedBook(req: Request) {
   };
 }
 
-// ─── GET /hub ────────────────────────────────────────────────────────────────
-bookClubRouter.get("/hub", authMiddleware(true), async (req: AuthRequest, res: Response) => {
+// ─── GET / (Listar Clubes) ──────────────────────────────────────────────────
+bookClubRouter.get("/", authMiddleware(true), async (req: AuthRequest, res: Response) => {
   try {
-    const cycle = await getOrCreateActiveCycle();
+    const userId = req.user?.id;
+    const search = ((req.query.search as string) || "").trim().toLowerCase();
+
+    const clubRepo = AppDataSource.getRepository(BookClub);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    // Encontra todos os clubes onde o usuário é membro
+    let myMemberships: BookClubMember[] = [];
+    if (userId) {
+      myMemberships = await memberRepo.find({
+        where: { user_id: userId },
+        relations: ["book_club"],
+      });
+    }
+
+    const myClubIds = myMemberships.map((m) => m.book_club_id);
+
+    // Query para buscar outros clubes públicos para explorar
+    const queryBuilder = clubRepo.createQueryBuilder("c")
+      .leftJoinAndSelect("c.criado_por", "criado_por");
+
+    if (myClubIds.length > 0) {
+      queryBuilder.where("c.id NOT IN (:...myClubIds)", { myClubIds });
+      queryBuilder.andWhere("c.privado = false");
+    } else {
+      queryBuilder.where("c.privado = false");
+    }
+
+    if (search) {
+      queryBuilder.andWhere("LOWER(c.nome) LIKE :search", { search: `%${search}%` });
+    }
+
+    const exploreClubs = await queryBuilder.getMany();
+
+    const myClubsPayload = myMemberships.map((m) => ({
+      id: m.book_club.id,
+      nome: m.book_club.nome,
+      descricao: m.book_club.descricao,
+      imagem: m.book_club.imagem,
+      privado: m.book_club.privado,
+      convite_codigo: m.papel === "dono" || req.user?.papel === "admin" ? m.book_club.convite_codigo : null,
+      criado_em: m.book_club.criado_em,
+      is_member: true,
+      membership_status: m.status,
+      papel: m.papel,
+    }));
+
+    const explorePayload = exploreClubs.map((c) => ({
+      id: c.id,
+      nome: c.nome,
+      descricao: c.descricao,
+      imagem: c.imagem,
+      privado: c.privado,
+      convite_codigo: null,
+      criado_em: c.criado_em,
+      is_member: false,
+      membership_status: null,
+      papel: null,
+    }));
+
+    res.json({
+      my_clubs: myClubsPayload,
+      explore_clubs: explorePayload,
+    });
+  } catch (err) {
+    console.error("List clubs error:", err);
+    res.status(500).json({ message: "Erro ao listar clubes de livro" });
+  }
+});
+
+// ─── POST / (Criar Clube) ───────────────────────────────────────────────────
+bookClubRouter.post("/", authMiddleware(), async (req: AuthRequest, res: Response) => {
+  try {
+    const { nome, descricao, privado } = req.body ?? {};
+    if (!nome || typeof nome !== "string" || nome.trim().length === 0) {
+      return res.status(400).json({ message: "Nome do clube é obrigatório" });
+    }
+
+    const userId = req.user!.id;
+    const clubRepo = AppDataSource.getRepository(BookClub);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    const inviteCode = generateInviteCode();
+
+    const club = clubRepo.create({
+      nome: nome.trim(),
+      descricao: descricao ? String(descricao).trim() : null,
+      privado: !!privado,
+      convite_codigo: inviteCode,
+      criado_por_id: userId,
+    });
+
+    const savedClub = await clubRepo.save(club);
+
+    // Adiciona o criador como dono do clube
+    await memberRepo.save(
+      memberRepo.create({
+        book_club_id: savedClub.id,
+        user_id: userId,
+        papel: "dono",
+        status: "active",
+      })
+    );
+
+    res.status(201).json({
+      id: savedClub.id,
+      nome: savedClub.nome,
+      descricao: savedClub.descricao,
+      privado: savedClub.privado,
+      convite_codigo: savedClub.convite_codigo,
+      criado_em: savedClub.criado_em,
+      is_member: true,
+      membership_status: "active",
+      papel: "dono",
+    });
+  } catch (err) {
+    console.error("Create club error:", err);
+    res.status(500).json({ message: "Erro ao criar clube de livro" });
+  }
+});
+
+// ─── POST /join (Entrar ou solicitar entrada) ───────────────────────────────
+bookClubRouter.post("/join", authMiddleware(), async (req: AuthRequest, res: Response) => {
+  try {
+    const { club_id, convite_codigo } = req.body ?? {};
+    const userId = req.user!.id;
+    const clubRepo = AppDataSource.getRepository(BookClub);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    let club: BookClub | null = null;
+
+    if (convite_codigo && String(convite_codigo).trim().length > 0) {
+      club = await clubRepo.findOneBy({ convite_codigo: String(convite_codigo).trim().toUpperCase() });
+      if (!club) {
+        return res.status(404).json({ message: "Código de convite inválido" });
+      }
+    } else if (club_id) {
+      club = await clubRepo.findOneBy({ id: parseInt(club_id) });
+      if (!club) {
+        return res.status(404).json({ message: "Clube do livro não encontrado" });
+      }
+    } else {
+      return res.status(400).json({ message: "Informe o ID do clube ou o código de convite" });
+    }
+
+    // Verifica se já é membro ou tem solicitação pendente
+    const existing = await memberRepo.findOneBy({ book_club_id: club.id, user_id: userId });
+    if (existing) {
+      if (existing.status === "active") {
+        return res.status(400).json({ message: "Você já é membro deste clube" });
+      } else {
+        return res.status(400).json({ message: "Você já possui uma solicitação pendente para este clube" });
+      }
+    }
+
+    let status = "active";
+    // Se o clube for privado e NÃO for usado o código de convite (ou seja, tentou entrar direto pelo ID)
+    if (club.privado && !convite_codigo) {
+      status = "pending_approval";
+    }
+
+    const member = memberRepo.create({
+      book_club_id: club.id,
+      user_id: userId,
+      papel: "membro",
+      status: status,
+    });
+
+    await memberRepo.save(member);
+
+    res.json({
+      message: status === "active" ? "Você entrou no clube com sucesso" : "Solicitação de entrada enviada com sucesso",
+      membership_status: status,
+      club: {
+        id: club.id,
+        nome: club.nome,
+        descricao: club.descricao,
+        privado: club.privado,
+      },
+    });
+  } catch (err) {
+    console.error("Join club error:", err);
+    res.status(500).json({ message: "Erro ao entrar no clube do livro" });
+  }
+});
+
+// ─── GET /:clubId/members (Listar membros ativos) ───────────────────────────
+bookClubRouter.get("/:clubId/members", authMiddleware(), checkClubMember, async (req: AuthRequest, res: Response) => {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    const members = await memberRepo.find({
+      where: { book_club_id: clubId, status: "active" },
+      relations: ["user"],
+      order: { papel: "ASC", criado_em: "ASC" },
+    });
+
+    const payload = members.map((m) => ({
+      id: m.id,
+      user_id: m.user_id,
+      papel: m.papel,
+      criado_em: m.criado_em,
+      user: {
+        id: m.user.id,
+        nome: m.user.nome,
+        imagem_url: getImageUrl(req, m.user.imagem),
+      },
+    }));
+
+    res.json(payload);
+  } catch (err) {
+    console.error("List members error:", err);
+    res.status(500).json({ message: "Erro ao buscar membros do clube" });
+  }
+});
+
+// ─── GET /:clubId/requests (Listar solicitações pendentes - Dono) ────────────
+bookClubRouter.get("/:clubId/requests", authMiddleware(), checkClubOwner, async (req: AuthRequest, res: Response) => {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    const pending = await memberRepo.find({
+      where: { book_club_id: clubId, status: "pending_approval" },
+      relations: ["user"],
+      order: { criado_em: "DESC" },
+    });
+
+    const payload = pending.map((p) => ({
+      id: p.id,
+      criado_em: p.criado_em,
+      user: {
+        id: p.user.id,
+        nome: p.user.nome,
+        email: p.user.email,
+        imagem_url: getImageUrl(req, p.user.imagem),
+      },
+    }));
+
+    res.json(payload);
+  } catch (err) {
+    console.error("List requests error:", err);
+    res.status(500).json({ message: "Erro ao buscar solicitações pendentes" });
+  }
+});
+
+// ─── POST /:clubId/requests/:requestId/approve (Aprovar solicitação) ─────────
+bookClubRouter.post("/:clubId/requests/:requestId/approve", authMiddleware(), checkClubOwner, async (req: AuthRequest, res: Response) => {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const requestId = parseInt(req.params.requestId);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    const request = await memberRepo.findOneBy({ id: requestId, book_club_id: clubId, status: "pending_approval" });
+    if (!request) {
+      return res.status(404).json({ message: "Solicitação não encontrada" });
+    }
+
+    request.status = "active";
+    await memberRepo.save(request);
+
+    res.json({ message: "Solicitação aprovada com sucesso!" });
+  } catch (err) {
+    console.error("Approve request error:", err);
+    res.status(500).json({ message: "Erro ao aprovar solicitação" });
+  }
+});
+
+// ─── POST /:clubId/requests/:requestId/reject (Rejeitar solicitação) ─────────
+bookClubRouter.post("/:clubId/requests/:requestId/reject", authMiddleware(), checkClubOwner, async (req: AuthRequest, res: Response) => {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const requestId = parseInt(req.params.requestId);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    const request = await memberRepo.findOneBy({ id: requestId, book_club_id: clubId, status: "pending_approval" });
+    if (!request) {
+      return res.status(404).json({ message: "Solicitação não encontrada" });
+    }
+
+    await memberRepo.remove(request);
+
+    res.json({ message: "Solicitação rejeitada com sucesso" });
+  } catch (err) {
+    console.error("Reject request error:", err);
+    res.status(500).json({ message: "Erro ao rejeitar solicitação" });
+  }
+});
+
+// ─── POST /:clubId/invite (Adicionar membro diretamente pelo dono) ───────────
+bookClubRouter.post("/:clubId/invite", authMiddleware(), checkClubOwner, async (req: AuthRequest, res: Response) => {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const { user_id, email } = req.body ?? {};
+
+    if (!user_id && !email) {
+      return res.status(400).json({ message: "Informe user_id ou email do usuário" });
+    }
+
+    const userRepo = AppDataSource.getRepository(User);
+    const memberRepo = AppDataSource.getRepository(BookClubMember);
+
+    let targetUser: User | null = null;
+    if (user_id) {
+      targetUser = await userRepo.findOneBy({ id: parseInt(user_id) });
+    } else {
+      targetUser = await userRepo.findOneBy({ email: String(email).trim().toLowerCase() });
+    }
+    if (!targetUser) {
+      return res.status(404).json({ message: "Usuário não encontrado" });
+    }
+
+    const existing = await memberRepo.findOneBy({ book_club_id: clubId, user_id: targetUser.id });
+    if (existing) {
+      if (existing.status === "active") {
+        return res.status(400).json({ message: "Usuário já é membro deste clube" });
+      } else {
+        // Se estava pendente, já ativa diretamente
+        existing.status = "active";
+        await memberRepo.save(existing);
+        return res.json({ message: "Usuário adicionado ao clube com sucesso" });
+      }
+    }
+
+    await memberRepo.save(
+      memberRepo.create({
+        book_club_id: clubId,
+        user_id: targetUser.id,
+        papel: "membro",
+        status: "active",
+      })
+    );
+
+    res.json({ message: "Usuário adicionado ao clube com sucesso" });
+  } catch (err) {
+    console.error("Invite member error:", err);
+    res.status(500).json({ message: "Erro ao convidar/adicionar membro" });
+  }
+});
+
+// ─── GET /:clubId/hub ────────────────────────────────────────────────────────
+bookClubRouter.get("/:clubId/hub", authMiddleware(true), checkClubMember, async (req: AuthRequest, res: Response) => {
+  try {
+    const clubId = parseInt(req.params.clubId);
+    const cycle = await getOrCreateActiveCycle(clubId);
     const nominationRepo = AppDataSource.getRepository(BookClubNomination);
     const userId = req.user?.id ?? null;
+
+    const club = await AppDataSource.getRepository(BookClub).findOneBy({ id: clubId });
+    if (!club) return res.status(404).json({ message: "Clube não encontrado" });
 
     const nominations = await nominationRepo.find({
       where: { cycle_id: cycle.id },
@@ -205,7 +621,7 @@ bookClubRouter.get("/hub", authMiddleware(true), async (req: AuthRequest, res: R
       )
     );
 
-    let userStats = null;
+    let userStats: any = null;
     if (userId) {
       const myVotes = await getUserVotesInCycle(cycle.id, userId);
       const myNomination = nominations.find((n) => n.user_id === userId);
@@ -232,9 +648,24 @@ bookClubRouter.get("/hub", authMiddleware(true), async (req: AuthRequest, res: R
               ...(await nominationPayload(winner, votes, false, req)),
             };
           })()
-        : await getFeaturedBook(req);
+        : await getFeaturedBook(clubId, req);
+
+    // Busca dados adicionais do clube e papel do usuário
+    let userRole: string | null = null;
+    if (userId) {
+      const mem = await AppDataSource.getRepository(BookClubMember).findOneBy({ book_club_id: clubId, user_id: userId });
+      userRole = mem?.papel ?? null;
+    }
 
     res.json({
+      club: {
+        id: club.id,
+        nome: club.nome,
+        descricao: club.descricao,
+        privado: club.privado,
+        convite_codigo: userRole === "dono" || req.user?.papel === "admin" ? club.convite_codigo : null,
+        user_role: userRole,
+      },
       cycle: {
         id: cycle.id,
         titulo: cycle.titulo,
@@ -256,13 +687,15 @@ bookClubRouter.get("/hub", authMiddleware(true), async (req: AuthRequest, res: R
   }
 });
 
-// ─── GET /nominations ────────────────────────────────────────────────────────
+// ─── GET /:clubId/nominations ────────────────────────────────────────────────
 bookClubRouter.get(
-  "/nominations",
+  "/:clubId/nominations",
   authMiddleware(true),
+  checkClubMember,
   async (req: AuthRequest, res: Response) => {
     try {
-      const cycle = await getOrCreateActiveCycle();
+      const clubId = parseInt(req.params.clubId);
+      const cycle = await getOrCreateActiveCycle(clubId);
       const search = ((req.query.search as string) || "").trim().toLowerCase();
       const page = Math.max(1, parseInt(req.query.page as string) || 1);
       const perPage = Math.min(50, Math.max(1, parseInt(req.query.per_page as string) || 12));
@@ -327,13 +760,15 @@ bookClubRouter.get(
   }
 );
 
-// ─── POST /nominations ───────────────────────────────────────────────────────
+// ─── POST /:clubId/nominations ───────────────────────────────────────────────
 bookClubRouter.post(
-  "/nominations",
+  "/:clubId/nominations",
   authMiddleware(),
+  checkClubMember,
   async (req: AuthRequest, res: Response) => {
     try {
-      const cycle = await getOrCreateActiveCycle();
+      const clubId = parseInt(req.params.clubId);
+      const cycle = await getOrCreateActiveCycle(clubId);
       if (cycle.status === "sorteado" || cycle.status === "encerrado") {
         return res.status(400).json({ message: "O ciclo atual já foi encerrado" });
       }
@@ -404,15 +839,17 @@ bookClubRouter.post(
   }
 );
 
-// ─── POST /nominations/:id/vote ──────────────────────────────────────────────
+// ─── POST /:clubId/nominations/:id/vote ──────────────────────────────────────
 bookClubRouter.post(
-  "/nominations/:id/vote",
+  "/:clubId/nominations/:id/vote",
   authMiddleware(),
+  checkClubMember,
   async (req: AuthRequest, res: Response) => {
     try {
+      const clubId = parseInt(req.params.clubId);
       const nominationId = parseInt(req.params.id);
       const userId = req.user!.id;
-      const cycle = await getOrCreateActiveCycle();
+      const cycle = await getOrCreateActiveCycle(clubId);
 
       if (cycle.status === "sorteado" || cycle.status === "encerrado") {
         return res.status(400).json({ message: "A votação deste ciclo já encerrou" });
@@ -471,10 +908,11 @@ bookClubRouter.post(
   }
 );
 
-// ─── GET /activity ───────────────────────────────────────────────────────────
-bookClubRouter.get("/activity", authMiddleware(true), async (_req: AuthRequest, res: Response) => {
+// ─── GET /:clubId/activity ───────────────────────────────────────────────────
+bookClubRouter.get("/:clubId/activity", authMiddleware(true), checkClubMember, async (req: AuthRequest, res: Response) => {
   try {
-    const cycle = await getOrCreateActiveCycle();
+    const clubId = parseInt(req.params.clubId);
+    const cycle = await getOrCreateActiveCycle(clubId);
     const activities: Array<{
       tipo: string;
       user_nome: string;
@@ -528,14 +966,15 @@ bookClubRouter.get("/activity", authMiddleware(true), async (_req: AuthRequest, 
   }
 });
 
-// ─── POST /draw (admin) ──────────────────────────────────────────────────────
+// ─── POST /:clubId/draw (dono ou admin) ──────────────────────────────────────
 bookClubRouter.post(
-  "/draw",
+  "/:clubId/draw",
   authMiddleware(),
-  requireRole("admin"),
-  async (_req: AuthRequest, res: Response) => {
+  checkClubOwner,
+  async (req: AuthRequest, res: Response) => {
     try {
-      const cycle = await getOrCreateActiveCycle();
+      const clubId = parseInt(req.params.clubId);
+      const cycle = await getOrCreateActiveCycle(clubId);
       if (cycle.status === "sorteado") {
         return res.status(400).json({ message: "O sorteio deste ciclo já foi realizado" });
       }
@@ -560,16 +999,20 @@ bookClubRouter.post(
   }
 );
 
-// ─── POST /cycle (admin — inicia novo ciclo) ─────────────────────────────────
+// ─── POST /:clubId/cycle (dono ou admin — inicia novo ciclo) ─────────────────
 bookClubRouter.post(
-  "/cycle",
+  "/:clubId/cycle",
   authMiddleware(),
-  requireRole("admin"),
-  async (_req: AuthRequest, res: Response) => {
+  checkClubOwner,
+  async (req: AuthRequest, res: Response) => {
     try {
+      const clubId = parseInt(req.params.clubId);
       const repo = AppDataSource.getRepository(BookClubCycle);
       const active = await repo.findOne({
-        where: [{ status: "nominacao" }, { status: "votacao" }],
+        where: [
+          { book_club_id: clubId, status: "nominacao" },
+          { book_club_id: clubId, status: "votacao" },
+        ],
       });
 
       if (active) {
@@ -580,6 +1023,7 @@ bookClubRouter.post(
       const now = new Date();
       const cycle = await repo.save(
         repo.create({
+          book_club_id: clubId,
           titulo: cycleTitle(now),
           status: "votacao",
           data_inicio: now,

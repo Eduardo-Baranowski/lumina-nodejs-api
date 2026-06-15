@@ -16,6 +16,8 @@ import { BookClubCycle } from "../entities/BookClubCycle";
 import { BookClubNomination } from "../entities/BookClubNomination";
 import { BookClubVote } from "../entities/BookClubVote";
 import { Endereco } from "../entities/Endereco";
+import { BookClub } from "../entities/BookClub";
+import { BookClubMember } from "../entities/BookClubMember";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -50,6 +52,8 @@ export const AppDataSource = new DataSource({
     BookClubNomination,
     BookClubVote,
     Endereco,
+    BookClub,
+    BookClubMember,
   ],
   subscribers: [],
   migrations: [],

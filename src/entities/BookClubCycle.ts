@@ -8,10 +8,15 @@ import {
 } from "typeorm";
 import { BookClubNomination } from "./BookClubNomination";
 
+import { BookClub } from "./BookClub";
+
 @Entity("book_club_cycle")
 export class BookClubCycle {
   @PrimaryGeneratedColumn()
   id: number;
+
+  @Column({ type: "integer", nullable: true })
+  book_club_id: number | null;
 
   @Column({ type: "varchar", length: 80 })
   titulo: string;
@@ -38,4 +43,8 @@ export class BookClubCycle {
   @ManyToOne(() => BookClubNomination, { nullable: true })
   @JoinColumn({ name: "nomination_vencedora_id" })
   nomination_vencedora: BookClubNomination | null;
+
+  @ManyToOne(() => BookClub, { onDelete: "CASCADE" })
+  @JoinColumn({ name: "book_club_id" })
+  book_club: BookClub | null;
 }
