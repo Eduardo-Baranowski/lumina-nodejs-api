@@ -129,16 +129,29 @@ readerRouter.get("/editors", async (req: Request, res: Response) => {
 readerRouter.get("/users/:id", async (req: Request, res: Response) => {
   const userId = parseInt(req.params.id);
   const userRepo = AppDataSource.getRepository(User);
+  const lecturaRepo = AppDataSource.getRepository(Leitura);
+  const followRepo = AppDataSource.getRepository(Follow);
+  
   try {
     const user = await userRepo.findOneBy({ id: userId });
     if (!user) {
       return res.status(404).json({ message: "Usuário não encontrado" });
     }
+    
+    const totalReadings = await lecturaRepo.countBy({ leitor_id: user.id, status: "lido" });
+    const followersCount = await followRepo.countBy({ following_id: user.id });
+
     return res.status(200).json({
       id: user.id,
       nome: user.nome,
       papel: user.papel,
       imagem_url: getImageUrl(req, user.imagem),
+      headline: user.headline || "Leitor da comunidade",
+      bio: user.bio || "Sem biografia ainda.",
+      stats: {
+        lidos: totalReadings,
+        seguidores: followersCount,
+      }
     });
   } catch (err) {
     console.error("Error getting public user profile:", err);
