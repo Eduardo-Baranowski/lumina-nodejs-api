@@ -1486,6 +1486,11 @@ readerRouter.post("/purchases", authMiddleware(), requireRole("leitor"), async (
         throw new Error("Estoque insuficiente");
       }
 
+      const preco = parseFloat(libro.preco || "0");
+      if (!Number.isFinite(preco) || preco <= 0) {
+        throw new Error("Este livro não está disponível para venda");
+      }
+
       libro.estoque -= qty;
       await manager.save(libro);
 
@@ -1511,7 +1516,7 @@ readerRouter.post("/purchases", authMiddleware(), requireRole("leitor"), async (
     if (error.message === "Livro não encontrado") {
       return res.status(404).json({ message: error.message });
     }
-    if (error.message === "Estoque insuficiente") {
+    if (error.message === "Estoque insuficiente" || error.message === "Este livro não está disponível para venda") {
       return res.status(400).json({ message: error.message });
     }
     console.error("Purchase error:", err);
@@ -1724,6 +1729,11 @@ readerRouter.post("/orders", authMiddleware(), requireRole("leitor"), async (req
 
         if (libro.estoque < qty) {
           throw new Error(`O livro '${libro.titulo}' possui apenas ${libro.estoque} unidades em estoque.`);
+        }
+
+        const preco = parseFloat(libro.preco || "0");
+        if (!Number.isFinite(preco) || preco <= 0) {
+          throw new Error(`O livro '${libro.titulo}' não está disponível para venda.`);
         }
 
         libro.estoque -= qty;

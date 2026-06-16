@@ -20,9 +20,9 @@ editorRouter.use(requireRole("editor"));
 
 // Pricing helper
 const parsePreco = (value: any): string | null => {
-  if (value === undefined || value === null) return null;
+  if (value === undefined || value === null) return "0.00";
   const raw = String(value).trim().replace(",", ".");
-  if (!raw) return null;
+  if (!raw) return "0.00";
   const num = parseFloat(raw);
   if (isNaN(num) || num < 0) return null;
   return num.toFixed(2);
@@ -186,8 +186,11 @@ editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, re
   }
 
   const preco = parsePreco(rawPreco);
-  if (!titulo || !autor || preco === null) {
-    return res.status(400).json({ message: "Título, autor e preço válido são obrigatórios" });
+  if (preco === null) {
+    return res.status(400).json({ message: "Preço inválido" });
+  }
+  if (!titulo || !autor) {
+    return res.status(400).json({ message: "Título e autor são obrigatórios" });
   }
 
   const libroRepository = AppDataSource.getRepository(Livro);

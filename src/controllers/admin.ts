@@ -4,6 +4,7 @@ import { User } from "../entities/User";
 import { Livro } from "../entities/Livro";
 import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
+import { deleteImage } from "../utils/image";
 import * as bcrypt from "bcryptjs";
 
 export const adminRouter = Router();
@@ -142,6 +143,80 @@ adminRouter.get("/export-csv", async (req: AuthRequest, res: Response) => {
     return res.status(200).send(csvContent);
   } catch (err) {
     console.error("Error exporting CSV:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// LIST ALL BOOKS (for moderation)
+adminRouter.get("/books", async (req: AuthRequest, res: Response) => {
+  const libroRepository = AppDataSource.getRepository(Livro);
+  const userRepository = AppDataSource.getRepository(User);
+  const page = parseInt(String(req.query.page || "1")) || 1;
+  const limit = 10;
+  const offset = (page - 1) * limit;
+
+  try {
+    const [books, total] = await libroRepository.findAndCount({
+      skip: offset,
+      take: limit,
+      order: { id: "DESC" },
+    });
+
+    // Get editor info for each book
+    const booksWithEditor = await Promise.all(
+      books.map(async (b) => {
+        const editor = await userRepository.findOneBy({ id: b.editor_id });
+        return {
+          id: b.id,
+          titulo: b.titulo,
+          autor: b.autor,
+          editor_nome: editor?.nome || "Desconhecido",
+          editor_id: b.editor_id,
+          preco: b.preco,
+          estoque: b.estoque,
+          genero: b.genero,
+          data_cadastro: b.data_cadastro ? b.data_cadastro.toISOString() : null,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      items: booksWithEditor,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+    });
+  } catch (err) {
+    console.error("Error listing books for admin:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// DELETE BOOK (permanent removal)
+adminRouter.delete("/books/:id", async (req: AuthRequest, res: Response) => {
+  const bookId = parseInt(req.params.id);
+
+  const libroRepository = AppDataSource.getRepository(Livro);
+
+  try {
+    const book = await libroRepository.findOneBy({ id: bookId });
+    if (!book) {
+      return res.status(404).json({ message: "Livro não encontrado" });
+    }
+
+    // Delete associated image file
+    if (book.imagem) {
+      deleteImage(book.imagem);
+    }
+
+    // Remove the book from database
+    await libroRepository.remove(book);
+
+    return res.status(200).json({
+      message: `Livro "${book.titulo}" removido permanentemente do sistema`,
+    });
+  } catch (err) {
+    console.error("Error deleting book:", err);
     return res.status(500).json({ message: "Erro interno no servidor" });
   }
 });

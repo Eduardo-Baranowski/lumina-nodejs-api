@@ -547,6 +547,24 @@ const options: swaggerJsdoc.Options = {
           responses: { 200: { description: "Usuário removido" } },
         },
       },
+      "/admin/books": {
+        get: {
+          tags: ["Admin"],
+          summary: "Lista todos os livros (moderação)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "page", in: "query", schema: { type: "integer", default: 1 } }],
+          responses: { 200: { description: "Lista de livros" } },
+        },
+      },
+      "/admin/books/{id}": {
+        delete: {
+          tags: ["Admin"],
+          summary: "Remove livro permanentemente (moderação)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: { 200: { description: "Livro removido" } },
+        },
+      },
       "/admin/orders": {
         get: {
           tags: ["Admin"],
