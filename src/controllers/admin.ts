@@ -4,10 +4,18 @@ import { User } from "../entities/User";
 import { Livro } from "../entities/Livro";
 import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
-import { deleteImage } from "../utils/image";
+import { getImageUrl, saveImage, deleteImage } from "../utils/image";
+import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
 import * as bcrypt from "bcryptjs";
+import { Editora } from "../entities/Editora";
+import multer from "multer";
+import * as path from "path";
 
 export const adminRouter = Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
 
 // Apply auth middleware to all admin routes
 adminRouter.use(authMiddleware());
@@ -57,11 +65,19 @@ adminRouter.post("/users", async (req: AuthRequest, res: Response) => {
   }
 
   const userRepository = AppDataSource.getRepository(User);
+  const editoraRepository = AppDataSource.getRepository(Editora);
 
   try {
     const userExists = await userRepository.findOneBy({ email });
     if (userExists) {
       return res.status(400).json({ message: "Email já cadastrado" });
+    }
+
+    if (papel === "editor") {
+      const editoraExists = await editoraRepository.findOne({ where: { nome } });
+      if (editoraExists) {
+        return res.status(400).json({ message: "Já existe uma Editora com este nome" });
+      }
     }
 
     const salt = bcrypt.genSaltSync(10);
@@ -152,10 +168,141 @@ adminRouter.delete("/users/:id", async (req: AuthRequest, res: Response) => {
       await transactionalEntityManager.remove(user);
     });
 
-    return res.status(200).json({ message: "Usuário removido com sucesso" });
+    return res.status(200).json({ message: "Usuário excluído com sucesso" });
   } catch (err) {
     console.error("Error deleting user:", err);
-    return res.status(500).json({ message: "Erro interno no servidor ao tentar deletar usuário" });
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.get("/editoras", async (req: AuthRequest, res: Response) => {
+  const editoraRepository = AppDataSource.getRepository(Editora);
+  try {
+    const search = req.query.search ? String(req.query.search) : "";
+    const whereClause = search
+      ? [{ nome: require("typeorm").ILike(`%${search}%`) }]
+      : {};
+
+    const editoras = await editoraRepository.find({
+      where: whereClause,
+      order: { nome: "ASC" },
+    });
+
+    return res.status(200).json(
+      editoras.map((e) => ({
+        id: e.id,
+        nome: e.nome,
+        imagem_url: getImageUrl(req, e.imagem),
+        criado_em: e.criado_em.toISOString(),
+      }))
+    );
+  } catch (err) {
+    console.error("Error listing editoras:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.post("/editoras", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const { nome } = req.body;
+  if (!nome || !nome.trim()) {
+    return res.status(400).json({ message: "Nome da editora é obrigatório" });
+  }
+
+  const editoraRepository = AppDataSource.getRepository(Editora);
+  const userRepository = AppDataSource.getRepository(User);
+
+  try {
+    // Verificar conflito com editoras existentes
+    const editoraExists = await editoraRepository.findOneBy({ nome: nome.trim() });
+    if (editoraExists) {
+      return res.status(400).json({ message: "Já existe uma Editora com este nome" });
+    }
+
+    // Verificar conflito com usuários que são editores
+    const userExists = await userRepository.findOneBy({ nome: nome.trim(), papel: "editor" });
+    if (userExists) {
+      return res.status(400).json({ message: "Já existe um usuário Editor com este nome" });
+    }
+
+    let imagem_path: string | null = null;
+    if (req.file) {
+      imagem_path = await saveImage(req.file, "editoras");
+    }
+
+    const novaEditora = new Editora();
+    novaEditora.nome = nome.trim();
+    novaEditora.imagem = imagem_path;
+
+    await editoraRepository.save(novaEditora);
+
+    return res.status(201).json({
+      message: "Editora cadastrada com sucesso",
+      id: novaEditora.id,
+    });
+  } catch (err) {
+    console.error("Error creating editora:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const { editora_id, titulo, autor, genero, descricao, open_library_cover_id, paginas } = req.body || {};
+
+  if (!editora_id) {
+    return res.status(400).json({ message: "A editora é obrigatória" });
+  }
+  if (!titulo || !autor) {
+    return res.status(400).json({ message: "Título e autor são obrigatórios" });
+  }
+
+  const editoraInt = parseInt(editora_id);
+  const paginasInt = parseInt(paginas || "0") || 0;
+
+  const editoraRepository = AppDataSource.getRepository(Editora);
+  const libroRepository = AppDataSource.getRepository(Livro);
+
+  try {
+    const editoraExists = await editoraRepository.findOneBy({ id: editoraInt });
+    if (!editoraExists) {
+      return res.status(404).json({ message: "Editora não encontrada" });
+    }
+
+    let imagem_path: string | null = null;
+    if (req.file) {
+      imagem_path = await saveImage(req.file, "books");
+    } else if (open_library_cover_id) {
+      const coverIdInt = parseInt(open_library_cover_id);
+      if (!isNaN(coverIdInt)) {
+        const uploadRoot = path.join(__dirname, "../../static/uploads");
+        imagem_path = await downloadCoverToUploads(coverIdInt, uploadRoot);
+      }
+    }
+
+    const novoLivro = new Livro();
+    novoLivro.editor_id = null;
+    novoLivro.editora_id = editoraInt;
+    novoLivro.titulo = titulo;
+    novoLivro.autor = autor;
+    novoLivro.preco = "0.00";
+    novoLivro.estoque = 0;
+    novoLivro.paginas = paginasInt;
+    novoLivro.genero = genero || null;
+    novoLivro.condicao = "novo";
+    novoLivro.descricao = descricao || null;
+    novoLivro.imagem = imagem_path;
+
+    await libroRepository.save(novoLivro);
+
+    return res.status(201).json({
+      message: "Livro cadastrado com sucesso",
+      id: novoLivro.id,
+    });
+  } catch (err) {
+    console.error("Error creating book:", err);
+    if ((err as any).name === "QueryFailedError") {
+      return res.status(400).json({ message: "Dados inválidos" });
+    }
+    return res.status(500).json({ message: "Erro interno no servidor" });
   }
 });
 
@@ -254,16 +401,25 @@ adminRouter.get("/books", async (req: AuthRequest, res: Response) => {
       order: { id: "DESC" },
     });
 
-    // Get editor info for each book
+    const editoraRepository = AppDataSource.getRepository(Editora);
     const booksWithEditor = await Promise.all(
       books.map(async (b) => {
-        const editor = await userRepository.findOneBy({ id: b.editor_id });
+        let editorNome = "Desconhecido";
+        if (b.editor_id) {
+          const editor = await userRepository.findOneBy({ id: b.editor_id });
+          if (editor) editorNome = editor.nome;
+        } else if (b.editora_id) {
+          const editora = await editoraRepository.findOneBy({ id: b.editora_id });
+          if (editora) editorNome = editora.nome;
+        }
+
         return {
           id: b.id,
           titulo: b.titulo,
           autor: b.autor,
-          editor_nome: editor?.nome || "Desconhecido",
+          editor_nome: editorNome,
           editor_id: b.editor_id,
+          editora_id: b.editora_id,
           preco: b.preco,
           estoque: b.estoque,
           genero: b.genero,

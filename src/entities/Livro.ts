@@ -1,13 +1,17 @@
 import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn } from "typeorm";
 import { User } from "./User";
+import { Editora } from "./Editora";
 
 @Entity("livro")
 export class Livro {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ type: "integer" })
-  editor_id: number;
+  @Column({ type: "integer", nullable: true })
+  editor_id: number | null;
+
+  @Column({ type: "integer", nullable: true })
+  editora_id: number | null;
 
   @Column({ type: "varchar", length: 200 })
   titulo: string;
@@ -42,4 +46,8 @@ export class Livro {
   @ManyToOne(() => User)
   @JoinColumn({ name: "editor_id" })
   editor: User;
+
+  @ManyToOne(() => Editora)
+  @JoinColumn({ name: "editora_id" })
+  editora: Editora;
 }
