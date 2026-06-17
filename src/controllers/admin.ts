@@ -16,7 +16,16 @@ adminRouter.use(requireRole("admin"));
 adminRouter.get("/users", async (req: AuthRequest, res: Response) => {
   const userRepository = AppDataSource.getRepository(User);
   try {
+    const search = req.query.search ? String(req.query.search) : "";
+    const whereClause = search
+      ? [
+          { nome: require("typeorm").ILike(`%${search}%`) },
+          { email: require("typeorm").ILike(`%${search}%`) }
+        ]
+      : {};
+
     const users = await userRepository.find({
+      where: whereClause,
       order: { id: "ASC" },
     });
 
@@ -73,6 +82,80 @@ adminRouter.post("/users", async (req: AuthRequest, res: Response) => {
   } catch (err) {
     console.error("Error creating user:", err);
     return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+adminRouter.delete("/users/:id", async (req: AuthRequest, res: Response) => {
+  const userId = parseInt(req.params.id);
+  const userRepository = AppDataSource.getRepository(User);
+
+  try {
+    const user = await userRepository.findOneBy({ id: userId });
+    if (!user) {
+      return res.status(404).json({ message: "Usuário não encontrado" });
+    }
+
+    await AppDataSource.manager.transaction(async (transactionalEntityManager) => {
+      // 1. Social & Messages
+      await transactionalEntityManager.query('DELETE FROM "friendship" WHERE requester_id = $1 OR addressee_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "follow" WHERE follower_id = $1 OR following_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "message" WHERE sender_id = $1 OR receiver_id = $1', [userId]);
+      
+      // 2. Book Clubs
+      await transactionalEntityManager.query('DELETE FROM "book_club_vote" WHERE nomination_id IN (SELECT id FROM "book_club_nomination" WHERE user_id = $1)', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "book_club_vote" WHERE user_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "book_club_nomination" WHERE user_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "book_club_member" WHERE user_id = $1', [userId]);
+      
+      // If user owns a club, destroy the club and its dependencies
+      const userClubs = await transactionalEntityManager.query('SELECT id FROM "book_club" WHERE criado_por_id = $1', [userId]);
+      for (const c of userClubs) {
+         const clubId = c.id;
+         await transactionalEntityManager.query('DELETE FROM "book_club_vote" WHERE cycle_id IN (SELECT id FROM "book_club_cycle" WHERE book_club_id = $1)', [clubId]);
+         await transactionalEntityManager.query('UPDATE "book_club_cycle" SET "nomination_vencedora_id" = NULL WHERE book_club_id = $1', [clubId]);
+         await transactionalEntityManager.query('DELETE FROM "book_club_nomination" WHERE cycle_id IN (SELECT id FROM "book_club_cycle" WHERE book_club_id = $1)', [clubId]);
+         await transactionalEntityManager.query('DELETE FROM "book_club_cycle" WHERE book_club_id = $1', [clubId]);
+         await transactionalEntityManager.query('DELETE FROM "book_club_member" WHERE club_id = $1', [clubId]);
+         await transactionalEntityManager.query('DELETE FROM "book_club" WHERE id = $1', [clubId]);
+      }
+
+      // 3. Interactions (Feed, Leitura)
+      await transactionalEntityManager.query('DELETE FROM "feed_like" WHERE user_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "feed_comment" WHERE user_id = $1', [userId]);
+
+      // 4. Pedidos & Compras
+      await transactionalEntityManager.query('DELETE FROM "item_pedido" WHERE pedido_id IN (SELECT id FROM "pedido" WHERE leitor_id = $1)', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "pedido" WHERE leitor_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "compra" WHERE leitor_id = $1', [userId]);
+
+      // 5. Books (if user is editor, delete all published books and dependencies)
+      const livros = await transactionalEntityManager.query('SELECT id FROM "livro" WHERE editor_id = $1', [userId]);
+      for (const row of livros) {
+        const bookId = row.id;
+        await transactionalEntityManager.query('UPDATE "request" SET "livro_id" = NULL WHERE "livro_id" = $1', [bookId]);
+        await transactionalEntityManager.query('UPDATE "book_club_nomination" SET "livro_id" = NULL WHERE "livro_id" = $1', [bookId]);
+        await transactionalEntityManager.query('DELETE FROM "item_pedido" WHERE "livro_id" = $1', [bookId]);
+        await transactionalEntityManager.query('DELETE FROM "compra" WHERE "livro_id" = $1', [bookId]);
+        await transactionalEntityManager.query(`DELETE FROM "feed_like" WHERE "leitura_id" IN (SELECT "id" FROM "leitura" WHERE "livro_id" = $1)`, [bookId]);
+        await transactionalEntityManager.query(`DELETE FROM "feed_comment" WHERE "leitura_id" IN (SELECT "id" FROM "leitura" WHERE "livro_id" = $1)`, [bookId]);
+        await transactionalEntityManager.query('DELETE FROM "leitura" WHERE "livro_id" = $1', [bookId]);
+        await transactionalEntityManager.query('DELETE FROM "livro" WHERE "id" = $1', [bookId]);
+      }
+
+      // 6. Delete remaining leituras, requests, endereços
+      await transactionalEntityManager.query('DELETE FROM "feed_like" WHERE "leitura_id" IN (SELECT "id" FROM "leitura" WHERE "leitor_id" = $1)', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "feed_comment" WHERE "leitura_id" IN (SELECT "id" FROM "leitura" WHERE "leitor_id" = $1)', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "leitura" WHERE leitor_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "request" WHERE leitor_id = $1 OR editor_id = $1', [userId]);
+      await transactionalEntityManager.query('DELETE FROM "endereco" WHERE user_id = $1', [userId]);
+
+      // 7. Finally remove the user
+      await transactionalEntityManager.remove(user);
+    });
+
+    return res.status(200).json({ message: "Usuário removido com sucesso" });
+  } catch (err) {
+    console.error("Error deleting user:", err);
+    return res.status(500).json({ message: "Erro interno no servidor ao tentar deletar usuário" });
   }
 });
 
