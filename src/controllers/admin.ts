@@ -152,11 +152,20 @@ adminRouter.get("/books", async (req: AuthRequest, res: Response) => {
   const libroRepository = AppDataSource.getRepository(Livro);
   const userRepository = AppDataSource.getRepository(User);
   const page = parseInt(String(req.query.page || "1")) || 1;
+  const search = req.query.search ? String(req.query.search) : "";
   const limit = 10;
   const offset = (page - 1) * limit;
 
   try {
+    const whereClause = search
+      ? [
+          { titulo: require("typeorm").ILike(`%${search}%`) },
+          { autor: require("typeorm").ILike(`%${search}%`) }
+        ]
+      : {};
+
     const [books, total] = await libroRepository.findAndCount({
+      where: whereClause,
       skip: offset,
       take: limit,
       order: { id: "DESC" },
@@ -209,8 +218,30 @@ adminRouter.delete("/books/:id", async (req: AuthRequest, res: Response) => {
       deleteImage(book.imagem);
     }
 
-    // Remove the book from database
-    await libroRepository.remove(book);
+    // Remove related records first to avoid foreign key constraint violations
+    await AppDataSource.manager.transaction(async (transactionalEntityManager) => {
+      // Set nullable foreign keys to NULL
+      await transactionalEntityManager.query('UPDATE "request" SET "livro_id" = NULL WHERE "livro_id" = $1', [bookId]);
+      await transactionalEntityManager.query('UPDATE "book_club_nomination" SET "livro_id" = NULL WHERE "livro_id" = $1', [bookId]);
+
+      // Delete dependent records
+      await transactionalEntityManager.query('DELETE FROM "item_pedido" WHERE "livro_id" = $1', [bookId]);
+      await transactionalEntityManager.query('DELETE FROM "compra" WHERE "livro_id" = $1', [bookId]);
+
+      // Leitura has dependencies in feed_like and feed_comment
+      await transactionalEntityManager.query(`
+        DELETE FROM "feed_like" 
+        WHERE "leitura_id" IN (SELECT "id" FROM "leitura" WHERE "livro_id" = $1)
+      `, [bookId]);
+      await transactionalEntityManager.query(`
+        DELETE FROM "feed_comment" 
+        WHERE "leitura_id" IN (SELECT "id" FROM "leitura" WHERE "livro_id" = $1)
+      `, [bookId]);
+      await transactionalEntityManager.query('DELETE FROM "leitura" WHERE "livro_id" = $1', [bookId]);
+
+      // Finally remove the book
+      await transactionalEntityManager.remove(book);
+    });
 
     return res.status(200).json({
       message: `Livro "${book.titulo}" removido permanentemente do sistema`,
