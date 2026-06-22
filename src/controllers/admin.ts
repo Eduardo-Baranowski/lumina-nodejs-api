@@ -17,6 +17,15 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
 });
 
+const parsePreco = (value: any): string | null => {
+  if (value === undefined || value === null) return "0.00";
+  const raw = String(value).trim().replace(",", ".");
+  if (!raw) return "0.00";
+  const num = parseFloat(raw);
+  if (isNaN(num) || num < 0) return null;
+  return num.toFixed(2);
+};
+
 // Apply auth middleware to all admin routes
 adminRouter.use(authMiddleware());
 adminRouter.use(requireRole("admin"));
@@ -436,6 +445,134 @@ adminRouter.get("/books", async (req: AuthRequest, res: Response) => {
     });
   } catch (err) {
     console.error("Error listing books for admin:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// GET BOOK DETAILS (for editing)
+adminRouter.get("/books/:id", async (req: AuthRequest, res: Response) => {
+  const bookId = parseInt(req.params.id);
+  const libroRepository = AppDataSource.getRepository(Livro);
+  const userRepository = AppDataSource.getRepository(User);
+  const editoraRepository = AppDataSource.getRepository(Editora);
+
+  try {
+    const book = await libroRepository.findOneBy({ id: bookId });
+    if (!book) {
+      return res.status(404).json({ message: "Livro não encontrado" });
+    }
+
+    let editorNome = "Desconhecido";
+    if (book.editor_id) {
+      const editor = await userRepository.findOneBy({ id: book.editor_id });
+      if (editor) editorNome = editor.nome;
+    } else if (book.editora_id) {
+      const editora = await editoraRepository.findOneBy({ id: book.editora_id });
+      if (editora) editorNome = editora.nome;
+    }
+
+    return res.status(200).json({
+      id: book.id,
+      titulo: book.titulo,
+      autor: book.autor,
+      editor_nome: editorNome,
+      editor_id: book.editor_id,
+      editora_id: book.editora_id,
+      preco: book.preco,
+      estoque: book.estoque,
+      genero: book.genero,
+      descricao: book.descricao,
+      paginas: book.paginas,
+      imagem_url: getImageUrl(req, book.imagem),
+    });
+  } catch (err) {
+    console.error("Error fetching book for admin:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// UPDATE BOOK
+adminRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const bookId = parseInt(req.params.id);
+  const libroRepository = AppDataSource.getRepository(Livro);
+  const editoraRepository = AppDataSource.getRepository(Editora);
+
+  try {
+    const livro = await libroRepository.findOneBy({ id: bookId });
+    if (!livro) {
+      return res.status(404).json({ message: "Livro não encontrado" });
+    }
+
+    const body = req.body || {};
+
+    if ("titulo" in body) livro.titulo = body.titulo;
+    if ("autor" in body) livro.autor = body.autor;
+    if ("genero" in body) livro.genero = body.genero;
+    if ("descricao" in body) livro.descricao = body.descricao;
+    if ("paginas" in body) {
+      const paginasInt = parseInt(body.paginas);
+      livro.paginas = isNaN(paginasInt) ? 0 : paginasInt;
+    }
+
+    if ("editora_id" in body) {
+      const editoraInt = parseInt(body.editora_id);
+      if (isNaN(editoraInt)) {
+        return res.status(400).json({ message: "editora inválida" });
+      }
+      const editoraExists = await editoraRepository.findOneBy({ id: editoraInt });
+      if (!editoraExists) {
+        return res.status(404).json({ message: "Editora não encontrada" });
+      }
+      livro.editora_id = editoraInt;
+      livro.editor_id = null;
+    }
+
+    if ("preco" in body) {
+      const preco = parsePreco(body.preco);
+      if (preco === null) {
+        return res.status(400).json({ message: "preço inválido" });
+      }
+      livro.preco = preco;
+    }
+
+    if ("estoque" in body) {
+      const estoque = parseInt(body.estoque);
+      if (isNaN(estoque)) {
+        return res.status(400).json({ message: "estoque inválido" });
+      }
+      if (estoque < 0) {
+        return res.status(400).json({ message: "estoque deve ser maior ou igual a zero" });
+      }
+      livro.estoque = estoque;
+    }
+
+    if (req.file) {
+      if (livro.imagem) {
+        deleteImage(livro.imagem);
+      }
+      livro.imagem = await saveImage(req.file, "books");
+    } else if (body.open_library_cover_id) {
+      const coverIdInt = parseInt(body.open_library_cover_id);
+      if (!isNaN(coverIdInt)) {
+        const uploadRoot = path.join(__dirname, "../../static/uploads");
+        const newPath = await downloadCoverToUploads(coverIdInt, uploadRoot);
+        if (newPath) {
+          if (livro.imagem) {
+            deleteImage(livro.imagem);
+          }
+          livro.imagem = newPath;
+        }
+      }
+    }
+
+    await libroRepository.save(livro);
+
+    return res.status(200).json({ message: "Livro atualizado com sucesso" });
+  } catch (err) {
+    console.error("Error updating book:", err);
+    if ((err as any).name === "QueryFailedError") {
+      return res.status(400).json({ message: "Dados inválidos" });
+    }
     return res.status(500).json({ message: "Erro interno no servidor" });
   }
 });
