@@ -13,11 +13,20 @@ export class Livro {
   @Column({ type: "integer", nullable: true })
   editora_id: number | null;
 
+  @Column({ type: "integer", nullable: true })
+  submitted_by_id: number | null;
+
   @Column({ type: "varchar", length: 200 })
   titulo: string;
 
   @Column({ type: "varchar", length: 200 })
   autor: string;
+
+  @Column({ type: "varchar", length: 20, nullable: true })
+  isbn: string | null;
+
+  @Column({ type: "varchar", length: 50, nullable: true })
+  open_library_key: string | null;
 
   @Column({ type: "numeric", precision: 10, scale: 2, default: "0.00" })
   preco: string;
@@ -50,4 +59,8 @@ export class Livro {
   @ManyToOne(() => Editora)
   @JoinColumn({ name: "editora_id" })
   editora: Editora;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: "submitted_by_id" })
+  submittedBy: User;
 }

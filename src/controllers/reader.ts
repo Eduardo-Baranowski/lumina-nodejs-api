@@ -15,6 +15,15 @@ import { Endereco } from "../entities/Endereco";
 import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage } from "../utils/image";
+import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
+import {
+  syncAuthorsForBook,
+  getAuthorsForBook,
+  findBookByIsbn,
+  getAuthorStats,
+} from "../services/authorService";
+import { Autor } from "../entities/Autor";
+import * as path from "path";
 import { sseHub, sseHandler } from "../realtime/hub";
 import * as bcrypt from "bcryptjs";
 import multer from "multer";
@@ -896,6 +905,293 @@ readerRouter.get("/search", async (req: Request, res: Response) => {
   }
 });
 
+const mapAutoresSummary = (autores: Autor[]) =>
+  autores.map((a) => ({ id: a.id, nome: a.nome }));
+
+// BOOK LOOKUP (ISBN / Open Library) — usuários autenticados
+readerRouter.get("/books/lookup", authMiddleware(), async (req: AuthRequest, res: Response) => {
+  const q = String(req.query.q || "").trim();
+  const limit = parseInt(String(req.query.limit || "8")) || 8;
+
+  if (q.length < 2) {
+    return res.status(400).json({
+      message: "Informe ao menos 2 caracteres para buscar.",
+      items: [],
+    });
+  }
+
+  try {
+    const items = await searchBooks(q, limit);
+
+    // Se parece ISBN, verificar se já existe no acervo
+    const isbnLike = q.replace(/[-\s]/g, "");
+    let existingBook: Livro | null = null;
+    if (/^\d{10,13}$/.test(isbnLike)) {
+      existingBook = await findBookByIsbn(isbnLike);
+    }
+
+    return res.status(200).json({
+      items,
+      existing_book: existingBook
+        ? {
+            id: existingBook.id,
+            titulo: existingBook.titulo,
+            autor: existingBook.autor,
+          }
+        : null,
+    });
+  } catch (err) {
+    console.error("Error in book lookup:", err);
+    return res.status(503).json({
+      message: "Serviço de busca temporariamente indisponível.",
+      items: [],
+    });
+  }
+});
+
+// COMMUNITY BOOK SUBMISSION — qualquer usuário autenticado
+readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+  const {
+    titulo,
+    autor,
+    genero,
+    descricao,
+    open_library_cover_id,
+    paginas,
+    isbn,
+    add_to_shelf,
+    shelf_status,
+  } = req.body || {};
+
+  if (!titulo || !autor) {
+    return res.status(400).json({ message: "Título e autor são obrigatórios" });
+  }
+
+  const paginasInt = parseInt(paginas || "0") || 0;
+  const libroRepository = AppDataSource.getRepository(Livro);
+
+  try {
+    if (isbn) {
+      const existing = await findBookByIsbn(String(isbn));
+      if (existing) {
+        let readingId: number | null = null;
+        if (add_to_shelf === "true" || add_to_shelf === true) {
+          const leituraRepo = AppDataSource.getRepository(Leitura);
+          const status = shelf_status || "quero_ler";
+          let reading = await leituraRepo.findOneBy({ leitor_id: userId, livro_id: existing.id });
+          if (!reading) {
+            reading = leituraRepo.create({
+              leitor_id: userId,
+              livro_id: existing.id,
+              status,
+            });
+            await leituraRepo.save(reading);
+          }
+          readingId = reading.id;
+        }
+        return res.status(200).json({
+          message: "Este livro já está no acervo.",
+          id: existing.id,
+          already_exists: true,
+          reading_id: readingId,
+        });
+      }
+    }
+
+    let imagem_path: string | null = null;
+    if (req.file) {
+      imagem_path = await saveImage(req.file, "books");
+    } else if (open_library_cover_id) {
+      const coverIdInt = parseInt(open_library_cover_id);
+      if (!isNaN(coverIdInt)) {
+        const uploadRoot = path.join(__dirname, "../../static/uploads");
+        imagem_path = await downloadCoverToUploads(coverIdInt, uploadRoot);
+      }
+    }
+
+    const novoLivro = new Livro();
+    novoLivro.submitted_by_id = userId;
+    novoLivro.titulo = String(titulo).trim();
+    novoLivro.autor = String(autor).trim();
+    novoLivro.preco = "0.00";
+    novoLivro.estoque = 0;
+    novoLivro.paginas = paginasInt;
+    novoLivro.genero = genero || null;
+    novoLivro.condicao = "novo";
+    novoLivro.descricao = descricao || null;
+    novoLivro.imagem = imagem_path;
+    novoLivro.isbn = isbn ? String(isbn).replace(/[-\s]/g, "") : null;
+
+    await AppDataSource.manager.transaction(async (manager) => {
+      await manager.save(novoLivro);
+      await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager);
+    });
+
+    let readingId: number | null = null;
+    if (add_to_shelf === "true" || add_to_shelf === true) {
+      const leituraRepo = AppDataSource.getRepository(Leitura);
+      const status = shelf_status || "quero_ler";
+      const reading = leituraRepo.create({
+        leitor_id: userId,
+        livro_id: novoLivro.id,
+        status,
+      });
+      await leituraRepo.save(reading);
+      readingId = reading.id;
+    }
+
+    return res.status(201).json({
+      message: "Livro cadastrado no acervo com sucesso!",
+      id: novoLivro.id,
+      already_exists: false,
+      reading_id: readingId,
+    });
+  } catch (err) {
+    console.error("Error submitting book:", err);
+    if ((err as any).name === "QueryFailedError") {
+      return res.status(400).json({ message: "Dados inválidos ou livro duplicado" });
+    }
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// UPDATE COMMUNITY BOOK — quem cadastrou ou admin
+readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+  const userRole = req.user!.papel;
+  const bookId = parseInt(req.params.id);
+  const libroRepository = AppDataSource.getRepository(Livro);
+
+  try {
+    const livro = await libroRepository.findOneBy({ id: bookId });
+    if (!livro) {
+      return res.status(404).json({ message: "Livro não encontrado" });
+    }
+
+    const canEdit = livro.submitted_by_id === userId || userRole === "admin";
+    if (!canEdit) {
+      return res.status(403).json({ message: "Você não pode editar este livro" });
+    }
+
+    const body = req.body || {};
+
+    if ("titulo" in body) livro.titulo = String(body.titulo).trim();
+    if ("autor" in body) livro.autor = String(body.autor).trim();
+    if ("genero" in body) livro.genero = body.genero || null;
+    if ("descricao" in body) livro.descricao = body.descricao || null;
+    if ("isbn" in body) {
+      livro.isbn = body.isbn ? String(body.isbn).replace(/[-\s]/g, "") : null;
+    }
+    if ("paginas" in body) {
+      const paginasInt = parseInt(body.paginas);
+      livro.paginas = isNaN(paginasInt) ? 0 : paginasInt;
+    }
+
+    if (req.file) {
+      if (livro.imagem) {
+        deleteImage(livro.imagem);
+      }
+      livro.imagem = await saveImage(req.file, "books");
+    } else if (body.open_library_cover_id) {
+      const coverIdInt = parseInt(body.open_library_cover_id);
+      if (!isNaN(coverIdInt)) {
+        const uploadRoot = path.join(__dirname, "../../static/uploads");
+        const newPath = await downloadCoverToUploads(coverIdInt, uploadRoot);
+        if (newPath) {
+          if (livro.imagem) {
+            deleteImage(livro.imagem);
+          }
+          livro.imagem = newPath;
+        }
+      }
+    }
+
+    await AppDataSource.manager.transaction(async (manager) => {
+      await manager.save(livro);
+      if ("autor" in body) {
+        await syncAuthorsForBook(livro.id, livro.autor, manager);
+      }
+    });
+
+    return res.status(200).json({ message: "Livro atualizado com sucesso" });
+  } catch (err) {
+    console.error("Error updating community book:", err);
+    if ((err as any).name === "QueryFailedError") {
+      return res.status(400).json({ message: "Dados inválidos" });
+    }
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// SEARCH AUTHORS
+readerRouter.get("/autores/search", async (req: Request, res: Response) => {
+  const q = String(req.query.q || "").trim();
+  if (q.length < 2) {
+    return res.status(200).json({ items: [] });
+  }
+
+  try {
+    const autores = await AppDataSource.getRepository(Autor)
+      .createQueryBuilder("autor")
+      .where("autor.nome ILIKE :q", { q: `%${q}%` })
+      .orderBy("autor.nome", "ASC")
+      .take(15)
+      .getMany();
+
+    return res.status(200).json({
+      items: autores.map((a) => ({ id: a.id, nome: a.nome })),
+    });
+  } catch (err) {
+    console.error("Error searching authors:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// AUTHOR PROFILE
+readerRouter.get("/autores/:id", async (req: Request, res: Response) => {
+  const autorId = parseInt(req.params.id);
+  const autorRepo = AppDataSource.getRepository(Autor);
+  const libroRepo = AppDataSource.getRepository(Livro);
+
+  try {
+    const autor = await autorRepo.findOneBy({ id: autorId });
+    if (!autor) {
+      return res.status(404).json({ message: "Autor não encontrado" });
+    }
+
+    const stats = await getAuthorStats(autorId);
+
+    const livros = await libroRepo
+      .createQueryBuilder("livro")
+      .innerJoin("livro_autor", "la", "la.livro_id = livro.id")
+      .where("la.autor_id = :autorId", { autorId })
+      .orderBy("livro.titulo", "ASC")
+      .take(50)
+      .getMany();
+
+    return res.status(200).json({
+      id: autor.id,
+      nome: autor.nome,
+      slug: autor.slug,
+      bio: autor.bio,
+      imagem_url: getImageUrl(req, autor.imagem),
+      total_livros: stats.total_livros,
+      total_leituras: stats.total_leituras,
+      livros: livros.map((b) => ({
+        id: b.id,
+        titulo: b.titulo,
+        autor: b.autor,
+        genero: b.genero,
+        imagem_url: getImageUrl(req, b.imagem),
+      })),
+    });
+  } catch (err) {
+    console.error("Error fetching author:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
 // 15. BOOK DETAILS BY ID (Optional JWT)
 readerRouter.get("/books/:id", async (req: Request, res: Response) => {
   const bookId = parseInt(req.params.id);
@@ -913,21 +1209,25 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
     }
 
     let my_reading: any = null;
+    let can_edit = false;
 
     const currentUserId = getOptionalUserId(req);
     if (currentUserId) {
       const userRepo = AppDataSource.getRepository(User);
       const user = await userRepo.findOneBy({ id: currentUserId });
-      if (user && user.papel === "leitor") {
-        const reading = await lecturaRepo.findOneBy({ leitor_id: user.id, livro_id: book.id });
-        if (reading) {
-          my_reading = {
-            id: reading.id,
-            status: reading.status,
-            nota: reading.nota,
-            comentario: reading.comentario,
-            paginas_lidas: reading.paginas_lidas,
-          };
+      if (user) {
+        can_edit = book.submitted_by_id === user.id || user.papel === "admin";
+        if (user.papel === "leitor") {
+          const reading = await lecturaRepo.findOneBy({ leitor_id: user.id, livro_id: book.id });
+          if (reading) {
+            my_reading = {
+              id: reading.id,
+              status: reading.status,
+              nota: reading.nota,
+              comentario: reading.comentario,
+              paginas_lidas: reading.paginas_lidas,
+            };
+          }
         }
       }
     }
@@ -936,10 +1236,14 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
       id: book.id,
       titulo: book.titulo,
       autor: book.autor,
+      isbn: book.isbn,
+      autores: mapAutoresSummary(await getAuthorsForBook(book.id)),
       preco: book.preco,
       estoque: book.estoque,
       paginas: book.paginas,
       editor_id: book.editor_id,
+      submitted_by_id: book.submitted_by_id,
+      can_edit,
       status_estoque: book.estoque <= 0 ? "esgotado" : book.estoque <= 3 ? "baixo" : "disponivel",
       descricao: book.descricao,
       genero: book.genero,

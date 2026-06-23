@@ -6,6 +6,7 @@ import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
+import { syncAuthorsForBook } from "../services/authorService";
 import * as bcrypt from "bcryptjs";
 import { Editora } from "../entities/Editora";
 import multer from "multer";
@@ -301,6 +302,7 @@ adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res
     novoLivro.imagem = imagem_path;
 
     await libroRepository.save(novoLivro);
+    await syncAuthorsForBook(novoLivro.id, novoLivro.autor);
 
     return res.status(201).json({
       message: "Livro cadastrado com sucesso",
@@ -566,6 +568,9 @@ adminRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest, 
     }
 
     await libroRepository.save(livro);
+    if ("autor" in body) {
+      await syncAuthorsForBook(livro.id, livro.autor);
+    }
 
     return res.status(200).json({ message: "Livro atualizado com sucesso" });
   } catch (err) {
