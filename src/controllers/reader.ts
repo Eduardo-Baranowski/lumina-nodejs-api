@@ -23,6 +23,8 @@ import {
   getAuthorStats,
 } from "../services/authorService";
 import { Autor } from "../entities/Autor";
+import { Editora } from "../entities/Editora";
+import { LivroAutor } from "../entities/LivroAutor";
 import * as path from "path";
 import { sseHub, sseHandler } from "../realtime/hub";
 import * as bcrypt from "bcryptjs";
@@ -89,6 +91,31 @@ const getFeedItemDict = async (
   };
 };
 
+const toDateKey = (date?: Date | null): string => date ? date.toISOString().slice(0, 10) : "";
+
+const countConsecutiveDays = (dateKeys: Set<string>, from = new Date()): number => {
+  let count = 0;
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  while (dateKeys.has(toDateKey(cursor))) {
+    count += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  return count;
+};
+
+const compactBook = (req: Request, livro?: Livro | null, extra: Record<string, any> = {}) => {
+  if (!livro) return null;
+  return {
+    id: livro.id,
+    titulo: livro.titulo,
+    autor: livro.autor,
+    paginas: livro.paginas || 0,
+    genero: livro.genero,
+    imagem_url: getImageUrl(req, livro.imagem),
+    ...extra,
+  };
+};
+
 // 1. RANDOM QUOTE
 readerRouter.get("/random-quote", async (req: Request, res: Response) => {
   const lecturaRepo = AppDataSource.getRepository(Leitura);
@@ -131,6 +158,248 @@ readerRouter.get("/editors", async (req: Request, res: Response) => {
     return res.status(200).json(rows.map((u) => ({ id: u.id, nome: u.nome })));
   } catch (err) {
     console.error("Error listing editors:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// 2.1. READER STATISTICS
+readerRouter.get("/statistics", authMiddleware(), requireRole("leitor"), async (req: AuthRequest, res: Response) => {
+  const userId = req.user!.id;
+  const requestedYear = parseInt(String(req.query.year || new Date().getFullYear()));
+  const year = Number.isFinite(requestedYear) ? requestedYear : new Date().getFullYear();
+  const start = new Date(Date.UTC(year, 0, 1));
+  const end = new Date(Date.UTC(year + 1, 0, 1));
+
+  const leituraRepo = AppDataSource.getRepository(Leitura);
+  const livroRepo = AppDataSource.getRepository(Livro);
+  const feedLikeRepo = AppDataSource.getRepository(FeedLike);
+  const feedCommentRepo = AppDataSource.getRepository(FeedComment);
+  const editoraRepo = AppDataSource.getRepository(Editora);
+  const livroAutorRepo = AppDataSource.getRepository(LivroAutor);
+
+  try {
+    const allUserReadings = await leituraRepo.find({
+      where: { leitor_id: userId },
+      relations: ["livro", "livro.editora"],
+      order: { atualizado_em: "DESC", criado_em: "DESC" },
+    });
+
+    const years = Array.from(
+      new Set([
+        new Date().getFullYear(),
+        ...allUserReadings.map((r) => (r.atualizado_em || r.criado_em || new Date()).getUTCFullYear()),
+      ])
+    ).sort((a, b) => b - a);
+
+    const readingsInYear = allUserReadings.filter((r) => {
+      const date = r.atualizado_em || r.criado_em;
+      return date && date >= start && date < end;
+    });
+    const readInYear = readingsInYear.filter((r) => r.status === "lido");
+    const currentReadings = allUserReadings.filter((r) => r.status === "lendo").length;
+    const unreadReadings = allUserReadings.filter((r) => r.status === "quero_ler");
+
+    const pageCount = (r: Leitura) => r.livro?.paginas || r.paginas_lidas || 0;
+    const readPages = readInYear.reduce((sum, r) => sum + pageCount(r), 0);
+    const readCount = readInYear.length;
+    const ratingsCount = readInYear.filter((r) => r.nota !== null && r.nota !== undefined).length;
+    const reviewsCount = readInYear.filter((r) => (r.comentario || "").trim().length > 0).length;
+    const averageRating = ratingsCount
+      ? readInYear.reduce((sum, r) => sum + (r.nota || 0), 0) / ratingsCount
+      : 0;
+
+    const now = new Date();
+    const day = now.getUTCDay();
+    const weekStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - day));
+    const weekDays = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(weekStart);
+      date.setUTCDate(weekStart.getUTCDate() + index);
+      const key = toDateKey(date);
+      return {
+        key,
+        active: allUserReadings.some((r) => toDateKey(r.atualizado_em || r.criado_em) === key),
+        today: key === toDateKey(now),
+      };
+    });
+    const weekHistoryCount = weekDays.filter((d) => d.active).length;
+
+    const readDateKeys = new Set(readInYear.map((r) => toDateKey(r.atualizado_em || r.criado_em)));
+    const consecutiveDays = countConsecutiveDays(readDateKeys, now);
+    const elapsedDays = year === now.getUTCFullYear()
+      ? Math.max(1, Math.ceil((now.getTime() - start.getTime()) / 86400000) + 1)
+      : 365 + (new Date(Date.UTC(year, 1, 29)).getUTCMonth() === 1 ? 1 : 0);
+    const pagesPerDay = readPages / elapsedDays;
+
+    const ratingsByReaction: Record<string, { label: string; emoji: string; count: number }> = {
+      love: { label: "Amei", emoji: "😍", count: 0 },
+      excited: { label: "Empolgado", emoji: "🤩", count: 0 },
+      laughing: { label: "Rindo", emoji: "😂", count: 0 },
+      frustrated: { label: "Frustrado", emoji: "🙄", count: 0 },
+      crying: { label: "Chorando", emoji: "😭", count: 0 },
+    };
+    for (const reading of readInYear) {
+      if (reading.nota === 5) ratingsByReaction.love.count += 1;
+      if (reading.nota === 4) ratingsByReaction.excited.count += 1;
+      if (reading.nota === 3) ratingsByReaction.laughing.count += 1;
+      if (reading.nota === 2) ratingsByReaction.frustrated.count += 1;
+      if (reading.nota === 1) ratingsByReaction.crying.count += 1;
+    }
+    const reactions = Object.values(ratingsByReaction).map((r) => ({
+      ...r,
+      percent: ratingsCount ? Math.round((r.count / ratingsCount) * 100) : 0,
+    }));
+    const topReaction = reactions.reduce((best, r) => (r.count > best.count ? r : best), reactions[0]);
+
+    const byMonth = Array.from({ length: 12 }, (_, month) => ({
+      month: month + 1,
+      count: readInYear.filter((r) => (r.atualizado_em || r.criado_em).getUTCMonth() === month).length,
+    }));
+
+    const groupCount = <T extends string | number>(items: T[]) => {
+      const map = new Map<T, number>();
+      for (const item of items) map.set(item, (map.get(item) || 0) + 1);
+      return Array.from(map.entries())
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+    };
+
+    const genres = groupCount(
+      readInYear.map((r) => (r.livro?.genero || "Sem gênero").trim()).filter(Boolean)
+    ).slice(0, 8);
+
+    const editors = groupCount(
+      readInYear.map((r) => r.livro?.editora?.nome || "Sem editora")
+    ).slice(0, 4);
+    const editorImages = new Map<string, string | null>();
+    for (const editor of await editoraRepo.find()) {
+      editorImages.set(editor.nome, getImageUrl(req, editor.imagem));
+    }
+
+    const bookIds = readInYear.map((r) => r.livro_id);
+    let authorRows: any[] = [];
+    if (bookIds.length > 0) {
+      authorRows = await livroAutorRepo
+        .createQueryBuilder("livro_autor")
+        .leftJoinAndSelect("livro_autor.autor", "autor")
+        .where("livro_autor.livro_id IN (:...bookIds)", { bookIds })
+        .getMany();
+    }
+    const authorsByBook = new Map<number, any[]>();
+    for (const row of authorRows) {
+      const list = authorsByBook.get(row.livro_id) || [];
+      list.push(row.autor);
+      authorsByBook.set(row.livro_id, list);
+    }
+    const authorStats = groupCount(
+      readInYear.flatMap((r) => {
+        const authors = authorsByBook.get(r.livro_id);
+        return authors && authors.length ? authors.map((a) => a.nome) : [r.livro?.autor || "Autor desconhecido"];
+      })
+    ).slice(0, 4);
+    const authorImages = new Map<string, string | null>();
+    for (const row of authorRows) {
+      if (row.autor) authorImages.set(row.autor.nome, getImageUrl(req, row.autor.imagem));
+    }
+
+    const sortedByPages = [...readInYear].filter((r) => pageCount(r) > 0).sort((a, b) => pageCount(b) - pageCount(a));
+    const largest = sortedByPages[0] || null;
+    const smallest = sortedByPages.length > 0 ? sortedByPages[sortedByPages.length - 1] : null;
+
+    const readingIds = readInYear.map((r) => r.id);
+    let commentsReceived = 0;
+    let likesReceived = 0;
+    if (readingIds.length > 0) {
+      commentsReceived = await feedCommentRepo
+        .createQueryBuilder("comment")
+        .where("comment.leitura_id IN (:...readingIds)", { readingIds })
+        .getCount();
+      likesReceived = await feedLikeRepo
+        .createQueryBuilder("like")
+        .where("like.leitura_id IN (:...readingIds)", { readingIds })
+        .getCount();
+    }
+
+    const popularityRows = await leituraRepo
+      .createQueryBuilder("leitura")
+      .leftJoinAndSelect("leitura.livro", "livro")
+      .where("leitura.status = :status", { status: "lido" })
+      .select(["livro.id AS id", "COUNT(leitura.id) AS readers"])
+      .groupBy("livro.id")
+      .orderBy("readers", "DESC")
+      .limit(60)
+      .getRawMany();
+    const popularityIds = popularityRows.map((r) => parseInt(r.id)).filter(Boolean);
+    const popularBooks = popularityIds.length > 0 ? await livroRepo.findByIds(popularityIds) : [];
+    const popularityMap = new Map(popularityRows.map((r) => [parseInt(r.id), parseInt(r.readers)]));
+    const popularityPayload = popularBooks
+      .map((book) => ({ book, readers: popularityMap.get(book.id) || 0 }))
+      .sort((a, b) => b.readers - a.readers);
+    const mostPopular = popularityPayload[0] || null;
+    const leastPopular = popularityPayload.length > 0 ? popularityPayload[popularityPayload.length - 1] : null;
+
+    const topRead = [...readInYear]
+      .sort((a, b) => (popularityMap.get(b.livro_id) || 0) - (popularityMap.get(a.livro_id) || 0))
+      .slice(0, 10)
+      .map((r, index) => ({ position: index + 1, ...compactBook(req, r.livro, { readers: popularityMap.get(r.livro_id) || 0 }) }));
+
+    const unreadPages = unreadReadings.reduce((sum, r) => sum + pageCount(r), 0);
+    const remainingDays = pagesPerDay > 0 ? Math.ceil(unreadPages / pagesPerDay) : 0;
+
+    return res.status(200).json({
+      year,
+      years,
+      week: {
+        history_count: weekHistoryCount,
+        days: weekDays,
+      },
+      summary: {
+        read_books: readCount,
+        pages_read: readPages,
+        pages_per_day: Number(pagesPerDay.toFixed(1)),
+        ratings_count: ratingsCount,
+        reviews_count: reviewsCount,
+        consecutive_days: consecutiveDays,
+        current_readings: currentReadings,
+        unread_books: unreadReadings.length,
+        remaining_days: remainingDays,
+        average_rating: Number(averageRating.toFixed(1)),
+        comments_received: commentsReceived,
+        likes_received: likesReceived,
+      },
+      reactions: {
+        top: topReaction || null,
+        items: reactions,
+      },
+      months: byMonth,
+      genres,
+      largest_smallest: {
+        largest: largest ? compactBook(req, largest.livro, { pages: pageCount(largest) }) : null,
+        smallest: smallest ? compactBook(req, smallest.livro, { pages: pageCount(smallest) }) : null,
+      },
+      popularity: {
+        most: mostPopular ? compactBook(req, mostPopular.book, { readers: mostPopular.readers }) : null,
+        least: leastPopular ? compactBook(req, leastPopular.book, { readers: leastPopular.readers }) : null,
+      },
+      editors: editors.map((e) => ({
+        name: String(e.name),
+        count: e.count,
+        image_url: editorImages.get(String(e.name)) || null,
+      })),
+      authors: authorStats.map((a) => ({
+        name: String(a.name),
+        count: a.count,
+        image_url: authorImages.get(String(a.name)) || null,
+      })),
+      top_read: topRead,
+      formats: [
+        { name: "Físico", icon: "book", count: readCount },
+        { name: "eBook", icon: "phone", count: 0 },
+        { name: "Audiobook", icon: "headphones", count: 0 },
+      ],
+      languages: readCount > 0 ? [{ name: "Português", code: "pt-BR", count: readCount }] : [],
+    });
+  } catch (err) {
+    console.error("Error loading reader statistics:", err);
     return res.status(500).json({ message: "Erro interno no servidor" });
   }
 });
@@ -2334,4 +2603,3 @@ readerRouter.post("/addresses", authMiddleware(), async (req: AuthRequest, res: 
     return res.status(500).json({ message: "Erro interno no servidor" });
   }
 });
-
