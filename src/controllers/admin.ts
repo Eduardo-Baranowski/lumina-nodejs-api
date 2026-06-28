@@ -9,6 +9,7 @@ import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
 import { syncAuthorsForBook } from "../services/authorService";
 import * as bcrypt from "bcryptjs";
 import { Editora } from "../entities/Editora";
+import { Autor } from "../entities/Autor";
 import multer from "multer";
 import * as path from "path";
 
@@ -254,6 +255,113 @@ adminRouter.post("/editoras", upload.single("imagem"), async (req: AuthRequest, 
     });
   } catch (err) {
     console.error("Error creating editora:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+// ---------- AUTORES (Admin CRUD) ----------
+adminRouter.get("/autores", async (req: AuthRequest, res: Response) => {
+  const autorRepo = AppDataSource.getRepository(Autor);
+  try {
+    const search = req.query.search ? String(req.query.search) : "";
+    const whereClause = search ? [{ nome: require("typeorm").ILike(`%${search}%`) }] : {};
+
+    const autores = await autorRepo.find({ where: whereClause, order: { nome: "ASC" } });
+
+    return res.status(200).json(
+      autores.map((a) => ({
+        id: a.id,
+        nome: a.nome,
+        bio: a.bio,
+        nacionalidade: a.nacionalidade,
+        imagem_url: getImageUrl(req, a.imagem),
+        criado_em: a.criado_em.toISOString(),
+      }))
+    );
+  } catch (err) {
+    console.error("Error listing autores:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.post("/autores", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const { nome, bio, nacionalidade } = req.body || {};
+  if (!nome || !nome.trim()) {
+    return res.status(400).json({ message: "Nome do autor é obrigatório" });
+  }
+
+  const autorRepo = AppDataSource.getRepository(Autor);
+  try {
+    const exists = await autorRepo.findOne({ where: { nome: nome.trim() } });
+    if (exists) return res.status(400).json({ message: "Já existe um autor com este nome" });
+
+    let imagem_path: string | null = null;
+    if (req.file) {
+      imagem_path = await saveImage(req.file, "autores");
+      if (!imagem_path) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
+    }
+
+    const novo = new Autor();
+    novo.nome = nome.trim();
+    novo.bio = bio || null;
+    novo.nacionalidade = nacionalidade || null;
+    novo.imagem = imagem_path;
+
+    await autorRepo.save(novo);
+
+    return res.status(201).json({ message: "Autor criado com sucesso", id: novo.id });
+  } catch (err) {
+    console.error("Error creating autor:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.put("/autores/:id", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const autorId = parseInt(req.params.id);
+  const autorRepo = AppDataSource.getRepository(Autor);
+  const { nome, bio, nacionalidade } = req.body || {};
+
+  try {
+    const autor = await autorRepo.findOneBy({ id: autorId });
+    if (!autor) return res.status(404).json({ message: "Autor não encontrado" });
+
+    if (nome) autor.nome = String(nome).trim();
+    if (bio !== undefined) autor.bio = bio || null;
+    if (nacionalidade !== undefined) autor.nacionalidade = nacionalidade || null;
+
+    if (req.file) {
+      const saved = await saveImage(req.file, "autores");
+      if (!saved) return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      if (autor.imagem) deleteImage(autor.imagem);
+      autor.imagem = saved;
+    }
+
+    await autorRepo.save(autor);
+    return res.status(200).json({ message: "Autor atualizado com sucesso" });
+  } catch (err) {
+    console.error("Error updating autor:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.delete("/autores/:id", async (req: AuthRequest, res: Response) => {
+  const autorId = parseInt(req.params.id);
+  const autorRepo = AppDataSource.getRepository(Autor);
+
+  try {
+    const autor = await autorRepo.findOneBy({ id: autorId });
+    if (!autor) return res.status(404).json({ message: "Autor não encontrado" });
+
+    // Delete image if present
+    if (autor.imagem) deleteImage(autor.imagem);
+
+    // Remove associations (livro_autor links will cascade on delete via FK)
+    await autorRepo.remove(autor);
+    return res.status(200).json({ message: "Autor excluído com sucesso" });
+  } catch (err) {
+    console.error("Error deleting autor:", err);
     return res.status(500).json({ message: "Erro interno no servidor" });
   }
 });
