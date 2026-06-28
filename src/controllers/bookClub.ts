@@ -793,7 +793,7 @@ bookClubRouter.get(
       const nominationRepo = AppDataSource.getRepository(BookClubNomination);
       let nominations = await nominationRepo.find({
         where: { cycle_id: cycle.id },
-        relations: ["user", "livro"],
+        relations: ["user", "livro", "livro.editora"],
         order: { criado_em: "DESC" },
       });
 
