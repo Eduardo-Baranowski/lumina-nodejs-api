@@ -1315,6 +1315,25 @@ readerRouter.get("/books/lookup", authMiddleware(), async (req: AuthRequest, res
   }
 });
 
+// GET distinct nacionalidades (available to any authenticated user)
+readerRouter.get('/autores/nacionalidades', authMiddleware(), async (req: AuthRequest, res: Response) => {
+  const autorRepo = AppDataSource.getRepository(Autor);
+  try {
+    const rows = await autorRepo
+      .createQueryBuilder('autor')
+      .select('DISTINCT autor.nacionalidade', 'nacionalidade')
+      .where("autor.nacionalidade IS NOT NULL AND autor.nacionalidade <> ''")
+      .orderBy('nacionalidade', 'ASC')
+      .getRawMany();
+
+    const list = rows.map((r: any) => r.nacionalidade).filter(Boolean);
+    return res.status(200).json(list);
+  } catch (err) {
+    console.error('Error fetching nacionalidades (public):', err);
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
+});
+
 // COMMUNITY BOOK SUBMISSION — qualquer usuário autenticado
 readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
