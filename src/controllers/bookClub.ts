@@ -9,6 +9,7 @@ import { Livro } from "../entities/Livro";
 import { User } from "../entities/User";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
+import { syncAuthorsForBook } from "../services/authorService";
 import multer from "multer";
 
 export const bookClubRouter = Router();
@@ -44,6 +45,18 @@ function cycleTitle(date: Date): string {
 
 function endOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth() + 1, 0, 18, 0, 0);
+}
+
+function normalizeText(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+async function findBookByTitleAndAuthor(title: string, author: string): Promise<Livro | null> {
+  return AppDataSource.getRepository(Livro)
+    .createQueryBuilder("livro")
+    .where("LOWER(TRIM(livro.titulo)) = :title", { title: normalizeText(title) })
+    .andWhere("LOWER(TRIM(livro.autor)) = :author", { author: normalizeText(author) })
+    .getOne();
 }
 
 function daysUntil(target: Date): number {
@@ -786,59 +799,72 @@ bookClubRouter.post(
       const userId = req.user!.id;
       const nominationRepo = AppDataSource.getRepository(BookClubNomination);
 
-      let imagemPath: string | null = null;
-      if (req.file) {
-        imagemPath = await saveImage(req.file, "book_club_nominations");
-        if (!imagemPath) {
-          return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
-        }
-      }
-
       const existing = await nominationRepo.findOneBy({ cycle_id: cycle.id, user_id: userId });
       if (existing) {
         return res.status(400).json({ message: "Você já indicou um livro neste ciclo" });
       }
 
       let livro: Livro | null = null;
+      let tituloTrim: string | null = null;
+      let autorTrim: string | null = null;
       if (livro_id) {
         livro = await AppDataSource.getRepository(Livro).findOneBy({ id: parseInt(livro_id) });
         if (!livro) {
           return res.status(404).json({ message: "Livro não encontrado" });
         }
       } else {
-        const tituloTrim = (titulo as string)?.trim();
-        const autorTrim = (autor as string)?.trim();
+        tituloTrim = String(titulo ?? "").trim();
+        autorTrim = String(autor ?? "").trim();
         if (!tituloTrim || !autorTrim) {
           return res.status(400).json({
             message: "Informe livro_id ou titulo e autor",
           });
         }
+
+        livro = await findBookByTitleAndAuthor(tituloTrim, autorTrim);
       }
 
-      const duplicateQuery = nominationRepo
-        .createQueryBuilder("n")
-        .leftJoinAndSelect("n.livro", "livro")
-        .where("n.cycle_id = :cycleId", { cycleId: cycle.id });
+      let imagemPath: string | null = null;
+      if (req.file) {
+        const uploadFolder = livro || livro_id ? "book_club_nominations" : "books";
+        imagemPath = await saveImage(req.file, uploadFolder);
+        if (!imagemPath) {
+          return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+        }
+      }
 
-      if (livro) {
-        duplicateQuery.andWhere("n.livro_id = :livroId", { livroId: livro.id });
-      } else {
-        duplicateQuery.andWhere("LOWER(COALESCE(n.titulo, '')) = LOWER(:titulo)", {
-          titulo: (titulo as string).trim(),
+      if (!livro && !livro_id) {
+        const livroRepo = AppDataSource.getRepository(Livro);
+        const novoLivro = new Livro();
+        novoLivro.submitted_by_id = userId;
+        novoLivro.titulo = tituloTrim!;
+        novoLivro.autor = autorTrim!;
+        novoLivro.preco = "0.00";
+        novoLivro.estoque = 0;
+        novoLivro.paginas = 0;
+        novoLivro.genero = null;
+        novoLivro.condicao = "novo";
+        novoLivro.descricao = null;
+        novoLivro.imagem = imagemPath;
+        novoLivro.isbn = null;
+        novoLivro.open_library_key = null;
+        novoLivro.editora_id = null;
+        novoLivro.editor_id = null;
+
+        await AppDataSource.manager.transaction(async (manager) => {
+          await manager.save(novoLivro);
+          await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager);
         });
-      }
 
-      const duplicate = await duplicateQuery.getOne();
-      if (duplicate) {
-        return res.status(400).json({ message: "Este livro já foi indicado neste ciclo" });
+        livro = novoLivro;
       }
 
       const nomination = nominationRepo.create({
         cycle_id: cycle.id,
         user_id: userId,
         livro_id: livro?.id ?? null,
-        titulo: livro ? null : (titulo as string).trim(),
-        autor: livro ? null : (autor as string).trim(),
+        titulo: livro ? null : tituloTrim,
+        autor: livro ? null : autorTrim,
         motivo: motivo ? String(motivo).trim() : null,
         imagem: imagemPath,
       });
