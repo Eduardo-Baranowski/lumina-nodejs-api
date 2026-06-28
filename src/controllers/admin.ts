@@ -334,7 +334,7 @@ adminRouter.get("/nacionalidades/:id", async (req: AuthRequest, res: Response) =
   }
 });
 
-adminRouter.post("/nacionalidades", async (req: AuthRequest, res: Response) => {
+adminRouter.post("/nacionalidades", upload.single("flag"), async (req: AuthRequest, res: Response) => {
   const { nome, flag } = req.body || {};
   if (!nome || !String(nome).trim()) {
     return res.status(400).json({ message: "Nome da nacionalidade é obrigatório" });
@@ -347,9 +347,17 @@ adminRouter.post("/nacionalidades", async (req: AuthRequest, res: Response) => {
       return res.status(400).json({ message: "Já existe esta nacionalidade" });
     }
 
+    let flag_path: string | null = null;
+    if (req.file) {
+      flag_path = await saveImage(req.file, "nacionalidades");
+      if (!flag_path) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
+    }
+
     const nationality = nationalityRepo.create({
       nome: String(nome).trim(),
-      flag: flag ? String(flag).trim() : null,
+      flag: flag_path ? flag_path : (flag ? String(flag).trim() : null),
     });
     await nationalityRepo.save(nationality);
 
@@ -360,7 +368,7 @@ adminRouter.post("/nacionalidades", async (req: AuthRequest, res: Response) => {
   }
 });
 
-adminRouter.put("/nacionalidades/:id", async (req: AuthRequest, res: Response) => {
+adminRouter.put("/nacionalidades/:id", upload.single("flag"), async (req: AuthRequest, res: Response) => {
   const nationalityId = parseInt(req.params.id);
   const nationalityRepo = AppDataSource.getRepository(Nacionalidade);
   const { nome, flag } = req.body || {};
@@ -380,7 +388,12 @@ adminRouter.put("/nacionalidades/:id", async (req: AuthRequest, res: Response) =
       nationality.nome = String(nome).trim();
     }
 
-    if (flag !== undefined) {
+    if (req.file) {
+      const saved = await saveImage(req.file, "nacionalidades");
+      if (!saved) return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      if (nationality.flag) deleteImage(nationality.flag);
+      nationality.flag = saved;
+    } else if (flag !== undefined) {
       nationality.flag = flag ? String(flag).trim() : null;
     }
 
