@@ -6,7 +6,7 @@ import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
-import { syncAuthorsForBook, nationalityExists } from "../services/authorService";
+import { syncAuthorsForBook, nationalityExists, getAuthorsForBook } from "../services/authorService";
 import * as bcrypt from "bcryptjs";
 import { Editora } from "../entities/Editora";
 import { Autor } from "../entities/Autor";
@@ -27,6 +27,12 @@ const parsePreco = (value: any): string | null => {
   const num = parseFloat(raw);
   if (isNaN(num) || num < 0) return null;
   return num.toFixed(2);
+};
+
+const getBookAuthorNationality = async (bookId: number): Promise<string | null> => {
+  const authors = await getAuthorsForBook(bookId);
+  const nationality = authors.map((a) => a.nacionalidade?.trim()).find((n) => n && n.length > 0);
+  return nationality || null;
 };
 
 // Apply auth middleware to all admin routes
@@ -729,10 +735,12 @@ adminRouter.get("/books", async (req: AuthRequest, res: Response) => {
           if (editora) editorNome = editora.nome;
         }
 
+        const authorNationality = await getBookAuthorNationality(b.id);
         return {
           id: b.id,
           titulo: b.titulo,
           autor: b.autor,
+          author_nationality: authorNationality,
           editor_nome: editorNome,
           editor_id: b.editor_id,
           editora_id: b.editora_id,
@@ -778,10 +786,12 @@ adminRouter.get("/books/:id", async (req: AuthRequest, res: Response) => {
       if (editora) editorNome = editora.nome;
     }
 
+    const authorNationality = await getBookAuthorNationality(book.id);
     return res.status(200).json({
       id: book.id,
       titulo: book.titulo,
       autor: book.autor,
+      author_nationality: authorNationality,
       editor_nome: editorNome,
       editor_id: book.editor_id,
       editora_id: book.editora_id,
