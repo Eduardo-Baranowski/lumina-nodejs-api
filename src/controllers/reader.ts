@@ -204,7 +204,13 @@ readerRouter.post("/editoras", authMiddleware(), upload.single("imagem"), async 
     const normalizedName = String(nome).trim();
     const existingEditora = await editoraRepository.findOneBy({ nome: normalizedName });
     if (existingEditora) {
-      return res.status(400).json({ message: "Já existe uma Editora com este nome" });
+      return res.status(200).json({
+        message: "Editora já cadastrada",
+        id: existingEditora.id,
+        nome: existingEditora.nome,
+        imagem_url: getImageUrl(req, existingEditora.imagem),
+        criado_em: existingEditora.criado_em.toISOString(),
+      });
     }
 
     const existingEditorUser = await userRepository.findOneBy({ nome: normalizedName, papel: "editor" });

@@ -227,7 +227,13 @@ adminRouter.post("/editoras", upload.single("imagem"), async (req: AuthRequest, 
     // Verificar conflito com editoras existentes
     const editoraExists = await editoraRepository.findOneBy({ nome: nome.trim() });
     if (editoraExists) {
-      return res.status(400).json({ message: "Já existe uma Editora com este nome" });
+      return res.status(200).json({
+        message: "Editora já cadastrada",
+        id: editoraExists.id,
+        nome: editoraExists.nome,
+        imagem_url: getImageUrl(req, editoraExists.imagem),
+        criado_em: editoraExists.criado_em.toISOString(),
+      });
     }
 
     // Verificar conflito com usuários que são editores
@@ -253,6 +259,9 @@ adminRouter.post("/editoras", upload.single("imagem"), async (req: AuthRequest, 
     return res.status(201).json({
       message: "Editora cadastrada com sucesso",
       id: novaEditora.id,
+      nome: novaEditora.nome,
+      imagem_url: getImageUrl(req, novaEditora.imagem),
+      criado_em: novaEditora.criado_em.toISOString(),
     });
   } catch (err) {
     console.error("Error creating editora:", err);
