@@ -5,6 +5,7 @@ import { BookClubMember } from "../entities/BookClubMember";
 import { BookClubCycle } from "../entities/BookClubCycle";
 import { BookClubNomination } from "../entities/BookClubNomination";
 import { BookClubVote } from "../entities/BookClubVote";
+import { Editora } from "../entities/Editora";
 import { Livro } from "../entities/Livro";
 import { User } from "../entities/User";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
@@ -854,7 +855,7 @@ bookClubRouter.post(
         return res.status(400).json({ message: "O ciclo atual já foi encerrado" });
       }
 
-      const { livro_id, titulo, autor, motivo } = req.body ?? {};
+      const { livro_id, titulo, autor, editora, motivo } = req.body ?? {};
       const userId = req.user!.id;
       const nominationRepo = AppDataSource.getRepository(BookClubNomination);
       const memberRepo = AppDataSource.getRepository(BookClubMember);
@@ -886,6 +887,28 @@ bookClubRouter.post(
         livro = await findBookByTitleAndAuthor(tituloTrim, autorTrim);
       }
 
+      if (livro?.id) {
+        const duplicate = await nominationRepo.findOneBy({ cycle_id: cycle.id, livro_id: livro.id });
+        if (duplicate) {
+          return res.status(400).json({ message: "Este livro já foi indicado neste ciclo" });
+        }
+      } else if (!livro && tituloTrim && autorTrim) {
+        const duplicate = await nominationRepo
+          .createQueryBuilder("nomination")
+          .where("nomination.cycle_id = :cycleId", { cycleId: cycle.id })
+          .andWhere("LOWER(TRIM(nomination.titulo)) = :titulo", {
+            titulo: normalizeText(tituloTrim),
+          })
+          .andWhere("LOWER(TRIM(nomination.autor)) = :autor", {
+            autor: normalizeText(autorTrim),
+          })
+          .getOne();
+
+        if (duplicate) {
+          return res.status(400).json({ message: "Este livro já foi indicado neste ciclo" });
+        }
+      }
+
       let imagemPath: string | null = null;
       if (req.file) {
         const uploadFolder = livro || livro_id ? "book_club_nominations" : "books";
@@ -912,6 +935,19 @@ bookClubRouter.post(
         novoLivro.open_library_key = null;
         novoLivro.editora_id = null;
         novoLivro.editor_id = null;
+
+        const editoraTrim = String(editora ?? "").trim();
+        if (editoraTrim) {
+          const editoraRepo = AppDataSource.getRepository(Editora);
+          const existingEditora = await editoraRepo.findOne({ where: { nome: editoraTrim } });
+          if (existingEditora) {
+            novoLivro.editora_id = existingEditora.id;
+          } else {
+            const novaEditora = editoraRepo.create({ nome: editoraTrim, imagem: null });
+            const savedEditora = await editoraRepo.save(novaEditora);
+            novoLivro.editora_id = savedEditora.id;
+          }
+        }
 
         await AppDataSource.manager.transaction(async (manager) => {
           await manager.save(novoLivro);
