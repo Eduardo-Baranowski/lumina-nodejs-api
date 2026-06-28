@@ -1551,7 +1551,7 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
   try {
     const book = await libroRepo.findOne({
       where: { id: bookId },
-      relations: ["editor"],
+      relations: ["editor", "editora"],
     });
 
     if (!book) {
@@ -1600,8 +1600,8 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
       condicao: book.condicao || "novo",
       imagem: book.imagem,
       imagem_url: getImageUrl(req, book.imagem),
-      editora: book.editor ? book.editor.nome : "",
-      editora_imagem_url: book.editor ? getImageUrl(req, book.editor.imagem) : null,
+      editora: book.editora ? book.editora.nome : "",
+      editora_imagem_url: book.editora ? getImageUrl(req, book.editora.imagem) : null,
       publicador: book.editor
         ? {
             id: book.editor.id,
