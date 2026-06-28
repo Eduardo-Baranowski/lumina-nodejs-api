@@ -284,6 +284,46 @@ adminRouter.get("/autores", async (req: AuthRequest, res: Response) => {
   }
 });
 
+// GET distinct nacionalidades
+adminRouter.get("/autores/nacionalidades", async (req: AuthRequest, res: Response) => {
+  const autorRepo = AppDataSource.getRepository(Autor);
+  try {
+    const rows = await autorRepo
+      .createQueryBuilder('autor')
+      .select('DISTINCT autor.nacionalidade', 'nacionalidade')
+      .where("autor.nacionalidade IS NOT NULL AND autor.nacionalidade <> ''")
+      .orderBy('nacionalidade', 'ASC')
+      .getRawMany();
+
+    const list = rows.map((r: any) => r.nacionalidade).filter(Boolean);
+    return res.status(200).json(list);
+  } catch (err) {
+    console.error('Error fetching nacionalidades:', err);
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
+});
+
+// GET author details
+adminRouter.get("/autores/:id", async (req: AuthRequest, res: Response) => {
+  const autorId = parseInt(req.params.id);
+  const autorRepo = AppDataSource.getRepository(Autor);
+  try {
+    const autor = await autorRepo.findOneBy({ id: autorId });
+    if (!autor) return res.status(404).json({ message: "Autor não encontrado" });
+
+    return res.status(200).json({
+      id: autor.id,
+      nome: autor.nome,
+      bio: autor.bio,
+      nacionalidade: autor.nacionalidade,
+      imagem_url: getImageUrl(req, autor.imagem),
+    });
+  } catch (err) {
+    console.error("Error fetching autor details:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
 adminRouter.post("/autores", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
   const { nome, bio, nacionalidade } = req.body || {};
   if (!nome || !nome.trim()) {
