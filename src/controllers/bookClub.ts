@@ -908,6 +908,34 @@ bookClubRouter.post(
   }
 );
 
+// ─── DELETE /:clubId/nominations/:id (admin ou dono) ──────────────────────────
+bookClubRouter.delete(
+  "/:clubId/nominations/:id",
+  authMiddleware(),
+  checkClubOwner,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const clubId = parseInt(req.params.clubId);
+      const nominationId = parseInt(req.params.id);
+
+      const nomination = await AppDataSource.getRepository(BookClubNomination).findOne({
+        where: { id: nominationId, cycle_id: (await getOrCreateActiveCycle(clubId)).id },
+      });
+
+      if (!nomination) {
+        return res.status(404).json({ message: "Indicação não encontrada" });
+      }
+
+      await AppDataSource.getRepository(BookClubNomination).remove(nomination);
+
+      res.json({ message: "Indicação removida com sucesso" });
+    } catch (err) {
+      console.error("book-club delete nomination error:", err);
+      res.status(500).json({ message: "Erro ao remover indicação" });
+    }
+  }
+);
+
 // ─── GET /:clubId/activity ───────────────────────────────────────────────────
 bookClubRouter.get("/:clubId/activity", authMiddleware(true), checkClubMember, async (req: AuthRequest, res: Response) => {
   try {
