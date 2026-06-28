@@ -21,6 +21,8 @@ import {
   getAuthorsForBook,
   findBookByIsbn,
   getAuthorStats,
+  nationalityExists,
+  getAllNationalities,
 } from "../services/authorService";
 import { Autor } from "../entities/Autor";
 import { Editora } from "../entities/Editora";
@@ -1317,17 +1319,14 @@ readerRouter.get("/books/lookup", authMiddleware(), async (req: AuthRequest, res
 
 // GET distinct nacionalidades (available to any authenticated user)
 readerRouter.get('/autores/nacionalidades', authMiddleware(), async (req: AuthRequest, res: Response) => {
-  const autorRepo = AppDataSource.getRepository(Autor);
   try {
-    const rows = await autorRepo
-      .createQueryBuilder('autor')
-      .select('DISTINCT autor.nacionalidade', 'nacionalidade')
-      .where("autor.nacionalidade IS NOT NULL AND autor.nacionalidade <> ''")
-      .orderBy('nacionalidade', 'ASC')
-      .getRawMany();
-
-    const list = rows.map((r: any) => r.nacionalidade).filter(Boolean);
-    return res.status(200).json(list);
+    const nacionalidades = await getAllNationalities();
+    return res.status(200).json(nacionalidades.map((n) => ({
+      id: n.id,
+      nome: n.nome,
+      flag: n.flag,
+      criado_em: n.criado_em.toISOString(),
+    })));
   } catch (err) {
     console.error('Error fetching nacionalidades (public):', err);
     return res.status(500).json({ message: 'Erro interno no servidor' });
@@ -1360,12 +1359,8 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
   try {
     // Validate author_nationality if provided
     if (author_nationality && String(author_nationality).trim()) {
-      const autorRepo = AppDataSource.getRepository(Autor);
-      const exists = await autorRepo
-        .createQueryBuilder('a')
-        .where('a.nacionalidade = :n', { n: String(author_nationality).trim() })
-        .getCount();
-      if (exists === 0) {
+      const exists = await nationalityExists(String(author_nationality).trim());
+      if (!exists) {
         return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
       }
     }

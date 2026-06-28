@@ -6,10 +6,11 @@ import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
-import { syncAuthorsForBook } from "../services/authorService";
+import { syncAuthorsForBook, nationalityExists } from "../services/authorService";
 import * as bcrypt from "bcryptjs";
 import { Editora } from "../entities/Editora";
 import { Autor } from "../entities/Autor";
+import { Nacionalidade } from "../entities/Nacionalidade";
 import multer from "multer";
 import * as path from "path";
 
@@ -286,19 +287,123 @@ adminRouter.get("/autores", async (req: AuthRequest, res: Response) => {
 
 // GET distinct nacionalidades
 adminRouter.get("/autores/nacionalidades", async (req: AuthRequest, res: Response) => {
-  const autorRepo = AppDataSource.getRepository(Autor);
+  const nationalityRepo = AppDataSource.getRepository(Nacionalidade);
   try {
-    const rows = await autorRepo
-      .createQueryBuilder('autor')
-      .select('DISTINCT autor.nacionalidade', 'nacionalidade')
-      .where("autor.nacionalidade IS NOT NULL AND autor.nacionalidade <> ''")
-      .orderBy('nacionalidade', 'ASC')
-      .getRawMany();
-
-    const list = rows.map((r: any) => r.nacionalidade).filter(Boolean);
-    return res.status(200).json(list);
+    const rows = await nationalityRepo.find({ order: { nome: "ASC" } });
+    return res.status(200).json(rows.map((n) => n.nome));
   } catch (err) {
     console.error('Error fetching nacionalidades:', err);
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
+});
+
+adminRouter.get("/nacionalidades", async (req: AuthRequest, res: Response) => {
+  const nationalityRepo = AppDataSource.getRepository(Nacionalidade);
+  try {
+    const rows = await nationalityRepo.find({ order: { nome: "ASC" } });
+    return res.status(200).json(
+      rows.map((n) => ({
+        id: n.id,
+        nome: n.nome,
+        flag: n.flag,
+        criado_em: n.criado_em.toISOString(),
+      }))
+    );
+  } catch (err) {
+    console.error('Error listing nacionalidades:', err);
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
+});
+
+adminRouter.get("/nacionalidades/:id", async (req: AuthRequest, res: Response) => {
+  const nationalityId = parseInt(req.params.id);
+  const nationalityRepo = AppDataSource.getRepository(Nacionalidade);
+
+  try {
+    const nationality = await nationalityRepo.findOneBy({ id: nationalityId });
+    if (!nationality) return res.status(404).json({ message: "Nacionalidade não encontrada" });
+    return res.status(200).json({
+      id: nationality.id,
+      nome: nationality.nome,
+      flag: nationality.flag,
+      criado_em: nationality.criado_em.toISOString(),
+    });
+  } catch (err) {
+    console.error('Error fetching nacionalidade:', err);
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
+});
+
+adminRouter.post("/nacionalidades", async (req: AuthRequest, res: Response) => {
+  const { nome, flag } = req.body || {};
+  if (!nome || !String(nome).trim()) {
+    return res.status(400).json({ message: "Nome da nacionalidade é obrigatório" });
+  }
+
+  const nationalityRepo = AppDataSource.getRepository(Nacionalidade);
+  try {
+    const existing = await nationalityRepo.findOne({ where: { nome: String(nome).trim() } });
+    if (existing) {
+      return res.status(400).json({ message: "Já existe esta nacionalidade" });
+    }
+
+    const nationality = nationalityRepo.create({
+      nome: String(nome).trim(),
+      flag: flag ? String(flag).trim() : null,
+    });
+    await nationalityRepo.save(nationality);
+
+    return res.status(201).json({ message: "Nacionalidade criada com sucesso", id: nationality.id });
+  } catch (err) {
+    console.error('Error creating nacionalidade:', err);
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
+});
+
+adminRouter.put("/nacionalidades/:id", async (req: AuthRequest, res: Response) => {
+  const nationalityId = parseInt(req.params.id);
+  const nationalityRepo = AppDataSource.getRepository(Nacionalidade);
+  const { nome, flag } = req.body || {};
+
+  try {
+    const nationality = await nationalityRepo.findOneBy({ id: nationalityId });
+    if (!nationality) return res.status(404).json({ message: "Nacionalidade não encontrada" });
+
+    if (nome !== undefined) {
+      if (!nome || !String(nome).trim()) {
+        return res.status(400).json({ message: "Nome da nacionalidade não pode ficar em branco" });
+      }
+      const existing = await nationalityRepo.findOne({ where: { nome: String(nome).trim() } });
+      if (existing && existing.id !== nationalityId) {
+        return res.status(400).json({ message: "Já existe outra nacionalidade com este nome" });
+      }
+      nationality.nome = String(nome).trim();
+    }
+
+    if (flag !== undefined) {
+      nationality.flag = flag ? String(flag).trim() : null;
+    }
+
+    await nationalityRepo.save(nationality);
+    return res.status(200).json({ message: "Nacionalidade atualizada com sucesso" });
+  } catch (err) {
+    console.error('Error updating nacionalidade:', err);
+    return res.status(500).json({ message: 'Erro interno no servidor' });
+  }
+});
+
+adminRouter.delete("/nacionalidades/:id", async (req: AuthRequest, res: Response) => {
+  const nationalityId = parseInt(req.params.id);
+  const nationalityRepo = AppDataSource.getRepository(Nacionalidade);
+
+  try {
+    const nationality = await nationalityRepo.findOneBy({ id: nationalityId });
+    if (!nationality) return res.status(404).json({ message: "Nacionalidade não encontrada" });
+
+    await nationalityRepo.remove(nationality);
+    return res.status(200).json({ message: "Nacionalidade excluída com sucesso" });
+  } catch (err) {
+    console.error('Error deleting nacionalidade:', err);
     return res.status(500).json({ message: 'Erro interno no servidor' });
   }
 });
@@ -333,11 +438,8 @@ adminRouter.post("/autores", upload.single("imagem"), async (req: AuthRequest, r
   const autorRepo = AppDataSource.getRepository(Autor);
   // If nacionalidade provided, ensure it is one of the existing nacionalidades (selection-only)
   if (nacionalidade && String(nacionalidade).trim()) {
-    const exists = await autorRepo
-      .createQueryBuilder('a')
-      .where('a.nacionalidade = :n', { n: String(nacionalidade).trim() })
-      .getCount();
-    if (exists === 0) {
+    const exists = await nationalityExists(String(nacionalidade).trim());
+    if (!exists) {
       return res.status(400).json({ message: 'Nacionalidade inválida: selecione uma das opções existentes' });
     }
   }
@@ -381,11 +483,8 @@ adminRouter.put("/autores/:id", upload.single("imagem"), async (req: AuthRequest
     if (bio !== undefined) autor.bio = bio || null;
     if (nacionalidade !== undefined) {
       if (nacionalidade && String(nacionalidade).trim()) {
-        const exists = await autorRepo
-          .createQueryBuilder('a')
-          .where('a.nacionalidade = :n', { n: String(nacionalidade).trim() })
-          .getCount();
-        if (exists === 0) {
+        const exists = await nationalityExists(String(nacionalidade).trim());
+        if (!exists) {
           return res.status(400).json({ message: 'Nacionalidade inválida: selecione uma das opções existentes' });
         }
         autor.nacionalidade = String(nacionalidade).trim();
@@ -448,12 +547,8 @@ adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res
   try {
     // Validate author_nationality if provided: must exist in known nacionalidades
     if (author_nationality && String(author_nationality).trim()) {
-      const autorRepo = AppDataSource.getRepository(Autor);
-      const exists = await autorRepo
-        .createQueryBuilder('a')
-        .where('a.nacionalidade = :n', { n: String(author_nationality).trim() })
-        .getCount();
-      if (exists === 0) {
+      const exists = await nationalityExists(String(author_nationality).trim());
+      if (!exists) {
         return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
       }
     }
@@ -761,12 +856,8 @@ adminRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest, 
 
     // Validate author_nationality on update if provided
     if ("author_nationality" in body && body.author_nationality && String(body.author_nationality).trim()) {
-      const autorRepo = AppDataSource.getRepository(Autor);
-      const count = await autorRepo
-        .createQueryBuilder('a')
-        .where('a.nacionalidade = :n', { n: String(body.author_nationality).trim() })
-        .getCount();
-      if (count === 0) {
+      const exists = await nationalityExists(String(body.author_nationality).trim());
+      if (!exists) {
         return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
       }
     }

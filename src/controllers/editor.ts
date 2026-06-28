@@ -7,7 +7,7 @@ import { Autor } from "../entities/Autor";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
-import { syncAuthorsForBook } from "../services/authorService";
+import { syncAuthorsForBook, nationalityExists } from "../services/authorService";
 import multer from "multer";
 import * as path from "path";
 
@@ -226,12 +226,8 @@ editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, re
 
     // Validate author_nationality if provided: must exist in known nacionalidades
     if (author_nationality && String(author_nationality).trim()) {
-      const autorRepo = AppDataSource.getRepository(Autor);
-      const count = await autorRepo
-        .createQueryBuilder('a')
-        .where('a.nacionalidade = :n', { n: String(author_nationality).trim() })
-        .getCount();
-      if (count === 0) {
+      const exists = await nationalityExists(String(author_nationality).trim());
+      if (!exists) {
         return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
       }
     }
@@ -322,12 +318,8 @@ editorRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest,
     await libroRepository.save(livro);
     // Validate author_nationality on update if provided
     if ("author_nationality" in body && body.author_nationality && String(body.author_nationality).trim()) {
-      const autorRepo = AppDataSource.getRepository(Autor);
-      const count = await autorRepo
-        .createQueryBuilder('a')
-        .where('a.nacionalidade = :n', { n: String(body.author_nationality).trim() })
-        .getCount();
-      if (count === 0) {
+      const exists = await nationalityExists(String(body.author_nationality).trim());
+      if (!exists) {
         return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
       }
     }

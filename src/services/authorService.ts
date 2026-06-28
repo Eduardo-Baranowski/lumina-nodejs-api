@@ -4,6 +4,7 @@ import { AppDataSource } from "../config/database";
 import { Autor } from "../entities/Autor";
 import { LivroAutor } from "../entities/LivroAutor";
 import { Livro } from "../entities/Livro";
+import { Nacionalidade } from "../entities/Nacionalidade";
 
 export const slugifyAuthorName = (nome: string): string => {
   const base = nome
@@ -24,6 +25,20 @@ export const parseAuthorNames = (autorRaw: string): string[] => {
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
+};
+
+export const getAllNationalities = async (): Promise<Nacionalidade[]> => {
+  return AppDataSource.getRepository(Nacionalidade).find({ order: { nome: "ASC" } });
+};
+
+export const nationalityExists = async (nome: string): Promise<boolean> => {
+  const normalized = String(nome || "").trim();
+  if (!normalized) return false;
+  const count = await AppDataSource.getRepository(Nacionalidade)
+    .createQueryBuilder("n")
+    .where("n.nome = :nome", { nome: normalized })
+    .getCount();
+  return count > 0;
 };
 
 export const findOrCreateAutor = async (
