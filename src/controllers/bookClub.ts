@@ -8,9 +8,15 @@ import { BookClubVote } from "../entities/BookClubVote";
 import { Livro } from "../entities/Livro";
 import { User } from "../entities/User";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
-import { getImageUrl } from "../utils/image";
+import { getImageUrl, saveImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
+import multer from "multer";
 
 export const bookClubRouter = Router();
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 
 const MAX_VOTES_PER_CYCLE = 3;
 const MONTHS_PT = [
@@ -136,9 +142,11 @@ async function nominationPayload(
 ) {
   const titulo = nomination.livro?.titulo ?? nomination.titulo ?? "Sem título";
   const autor = nomination.livro?.autor ?? nomination.autor ?? "Autor desconhecido";
-  const imagemUrl = nomination.livro?.imagem
-    ? getImageUrl(req, nomination.livro.imagem)
-    : null;
+  const imagemUrl = nomination.imagem
+    ? getImageUrl(req, nomination.imagem)
+    : nomination.livro?.imagem
+      ? getImageUrl(req, nomination.livro.imagem)
+      : null;
   const genero = nomination.livro?.genero ?? null;
 
   return {
@@ -765,6 +773,7 @@ bookClubRouter.post(
   "/:clubId/nominations",
   authMiddleware(),
   checkClubMember,
+  upload.single("imagem"),
   async (req: AuthRequest, res: Response) => {
     try {
       const clubId = parseInt(req.params.clubId);
@@ -776,6 +785,14 @@ bookClubRouter.post(
       const { livro_id, titulo, autor, motivo } = req.body ?? {};
       const userId = req.user!.id;
       const nominationRepo = AppDataSource.getRepository(BookClubNomination);
+
+      let imagemPath: string | null = null;
+      if (req.file) {
+        imagemPath = await saveImage(req.file, "book_club_nominations");
+        if (!imagemPath) {
+          return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+        }
+      }
 
       const existing = await nominationRepo.findOneBy({ cycle_id: cycle.id, user_id: userId });
       if (existing) {
@@ -823,6 +840,7 @@ bookClubRouter.post(
         titulo: livro ? null : (titulo as string).trim(),
         autor: livro ? null : (autor as string).trim(),
         motivo: motivo ? String(motivo).trim() : null,
+        imagem: imagemPath,
       });
 
       const saved = await nominationRepo.save(nomination);

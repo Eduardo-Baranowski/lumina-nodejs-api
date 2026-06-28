@@ -33,6 +33,9 @@ export class BookClubNomination {
   @Column({ type: "text", nullable: true })
   motivo: string | null;
 
+  @Column({ type: "varchar", length: 1000, nullable: true })
+  imagem: string | null;
+
   @CreateDateColumn({ type: "timestamp" })
   criado_em: Date;
 
