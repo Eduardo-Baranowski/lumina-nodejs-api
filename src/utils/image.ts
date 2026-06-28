@@ -4,7 +4,31 @@ import * as fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import { v2 as cloudinary } from "cloudinary";
 
-const ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg", "gif"];
+const ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"];
+
+const MIME_TO_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/jpg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
+
+export const UNSUPPORTED_IMAGE_MESSAGE =
+  "Formato de imagem não suportado. Use JPG, PNG, GIF ou WebP.";
+
+/** Resolve extensão a partir do nome do arquivo ou do Content-Type do upload. */
+export function resolveImageExtension(file: Express.Multer.File): string | null {
+  const fromName = path.extname(file.originalname).toLowerCase().replace(".", "");
+  if (ALLOWED_EXTENSIONS.includes(fromName)) {
+    return fromName === "jpeg" ? "jpg" : fromName;
+  }
+
+  const fromMime = MIME_TO_EXT[file.mimetype?.toLowerCase() ?? ""];
+  if (fromMime) return fromMime;
+
+  return null;
+}
 
 // Use /tmp em serverless (Vercel), caso contrário use static/uploads local
 const isServerless = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
@@ -64,8 +88,11 @@ export const saveImage = async (
 ): Promise<string | null> => {
   if (!file) return null;
 
-  const ext = path.extname(file.originalname).toLowerCase().replace(".", "");
-  if (!ALLOWED_EXTENSIONS.includes(ext)) {
+  const ext = resolveImageExtension(file);
+  if (!ext) {
+    console.warn(
+      `Rejected image upload: ext=${path.extname(file.originalname)} mime=${file.mimetype}`
+    );
     return null;
   }
 

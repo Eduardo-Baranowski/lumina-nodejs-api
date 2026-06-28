@@ -4,7 +4,7 @@ import { Request as SystemRequest } from "../entities/Request";
 import { Livro } from "../entities/Livro";
 import { User } from "../entities/User";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
-import { getImageUrl, saveImage, deleteImage } from "../utils/image";
+import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
 import { syncAuthorsForBook } from "../services/authorService";
 import multer from "multer";
@@ -200,6 +200,9 @@ editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, re
     let imagem_path: string | null = null;
     if (req.file) {
       imagem_path = await saveImage(req.file, "books");
+      if (!imagem_path) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
     } else if (open_library_cover_id) {
       const coverIdInt = parseInt(open_library_cover_id);
       if (!isNaN(coverIdInt)) {
@@ -281,11 +284,14 @@ editorRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest,
     }
 
     if (req.file) {
-      // Remove old cover image if it exists
+      const saved = await saveImage(req.file, "books");
+      if (!saved) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
       if (livro.imagem) {
         deleteImage(livro.imagem);
       }
-      livro.imagem = await saveImage(req.file, "books");
+      livro.imagem = saved;
     } else if (body.open_library_cover_id) {
       const coverIdInt = parseInt(body.open_library_cover_id);
       if (!isNaN(coverIdInt)) {

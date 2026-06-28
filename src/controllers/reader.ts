@@ -14,7 +14,7 @@ import { FeedComment } from "../entities/FeedComment";
 import { Endereco } from "../entities/Endereco";
 import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
-import { getImageUrl, saveImage, deleteImage } from "../utils/image";
+import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
 import {
   syncAuthorsForBook,
@@ -1271,6 +1271,9 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
     let imagem_path: string | null = null;
     if (req.file) {
       imagem_path = await saveImage(req.file, "books");
+      if (!imagem_path) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
     } else if (open_library_cover_id) {
       const coverIdInt = parseInt(open_library_cover_id);
       if (!isNaN(coverIdInt)) {
@@ -1358,10 +1361,14 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
     }
 
     if (req.file) {
+      const saved = await saveImage(req.file, "books");
+      if (!saved) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
       if (livro.imagem) {
         deleteImage(livro.imagem);
       }
-      livro.imagem = await saveImage(req.file, "books");
+      livro.imagem = saved;
     } else if (body.open_library_cover_id) {
       const coverIdInt = parseInt(body.open_library_cover_id);
       if (!isNaN(coverIdInt)) {
@@ -2485,7 +2492,11 @@ readerRouter.post("/profile/photo", authMiddleware(), upload.single("imagem"), a
       deleteImage(user.imagem);
     }
 
-    user.imagem = await saveImage(req.file, "users");
+    const saved = await saveImage(req.file, "users");
+    if (!saved) {
+      return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+    }
+    user.imagem = saved;
     await userRepo.save(user);
 
     return res.status(200).json({
@@ -2508,6 +2519,14 @@ readerRouter.put("/profile/password", authMiddleware(), async (req: AuthRequest,
 
   if (!senha_atual || !nova_senha) {
     return res.status(400).json({ message: "Senhas atual e nova são obrigatórias" });
+  }
+
+  if (String(nova_senha).length < 6) {
+    return res.status(400).json({ message: "A nova senha deve ter ao menos 6 caracteres" });
+  }
+
+  if (senha_atual === nova_senha) {
+    return res.status(400).json({ message: "A nova senha deve ser diferente da atual" });
   }
 
   try {
