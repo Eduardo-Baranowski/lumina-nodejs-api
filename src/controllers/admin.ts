@@ -495,12 +495,16 @@ adminRouter.put("/autores/:id", upload.single("imagem"), async (req: AuthRequest
     if (nome) autor.nome = String(nome).trim();
     if (bio !== undefined) autor.bio = bio || null;
     if (nacionalidade !== undefined) {
-      if (nacionalidade && String(nacionalidade).trim()) {
-        const exists = await nationalityExists(String(nacionalidade).trim());
-        if (!exists) {
-          return res.status(400).json({ message: 'Nacionalidade inválida: selecione uma das opções existentes' });
+      const normalized = nacionalidade ? String(nacionalidade).trim() : '';
+      if (normalized) {
+        // allow if it matches the current value or exists in nacionalidade table
+        if (autor.nacionalidade !== normalized) {
+          const exists = await nationalityExists(normalized);
+          if (!exists) {
+            return res.status(400).json({ message: 'Nacionalidade inválida: selecione uma das opções existentes' });
+          }
         }
-        autor.nacionalidade = String(nacionalidade).trim();
+        autor.nacionalidade = normalized;
       } else {
         autor.nacionalidade = null;
       }
