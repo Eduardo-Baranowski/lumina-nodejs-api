@@ -29,7 +29,8 @@ export const parseAuthorNames = (autorRaw: string): string[] => {
 export const findOrCreateAutor = async (
   manager: EntityManager,
   nome: string,
-  openLibraryKey?: string | null
+  openLibraryKey?: string | null,
+  nacionalidade?: string | null
 ): Promise<Autor> => {
   const trimmed = nome.trim();
   const existing = await manager
@@ -39,10 +40,16 @@ export const findOrCreateAutor = async (
     .getOne();
 
   if (existing) {
+    let changed = false;
     if (openLibraryKey && !existing.open_library_key) {
       existing.open_library_key = openLibraryKey;
-      await manager.save(existing);
+      changed = true;
     }
+    if (nacionalidade && !existing.nacionalidade) {
+      existing.nacionalidade = nacionalidade;
+      changed = true;
+    }
+    if (changed) await manager.save(existing);
     return existing;
   }
 
@@ -50,6 +57,7 @@ export const findOrCreateAutor = async (
     nome: trimmed,
     slug: slugifyAuthorName(trimmed),
     open_library_key: openLibraryKey || null,
+    nacionalidade: nacionalidade || null,
   });
   return manager.save(autor);
 };
@@ -57,7 +65,8 @@ export const findOrCreateAutor = async (
 export const syncAuthorsForBook = async (
   livroId: number,
   autorRaw: string,
-  manager?: EntityManager
+  manager?: EntityManager,
+  nacionalidade?: string | null
 ): Promise<void> => {
   const em = manager || AppDataSource.manager;
   const names = parseAuthorNames(autorRaw);
@@ -66,7 +75,7 @@ export const syncAuthorsForBook = async (
   await em.delete(LivroAutor, { livro_id: livroId });
 
   for (let i = 0; i < names.length; i++) {
-    const autor = await findOrCreateAutor(em, names[i]);
+    const autor = await findOrCreateAutor(em, names[i], undefined, nacionalidade || null);
     const link = em.create(LivroAutor, {
       livro_id: livroId,
       autor_id: autor.id,

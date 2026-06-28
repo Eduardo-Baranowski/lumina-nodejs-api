@@ -17,6 +17,9 @@ export class Autor {
   @Column({ type: "varchar", length: 255, nullable: true })
   imagem: string | null;
 
+  @Column({ type: "varchar", length: 100, nullable: true })
+  nacionalidade: string | null;
+
   @Column({ type: "varchar", length: 50, nullable: true })
   open_library_key: string | null;
 

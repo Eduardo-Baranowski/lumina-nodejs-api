@@ -19,3 +19,16 @@ model User {
 
   @@map("user")
 }
+
+model Autor {
+  id               Int      @id @default(autoincrement())
+  nome             String   @db.VarChar(200)
+  slug             String   @unique @db.VarChar(220)
+  bio              String?  @db.Text
+  imagem           String?  @db.VarChar(255)
+  nacionalidade    String?  @db.VarChar(100)
+  open_library_key String?  @db.VarChar(50)
+  criado_em        DateTime @db.Timestamp(6)
+
+  @@map("autor")
+}

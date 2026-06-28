@@ -375,6 +375,24 @@ readerRouter.get("/statistics", authMiddleware(), requireRole("leitor"), async (
       if (row.autor) authorImages.set(row.autor.nome, getImageUrl(req, row.autor.imagem));
     }
 
+    // Nationality counts: Brazilian / Foreign / Unknown
+    let brazilianCount = 0;
+    let foreignCount = 0;
+    let unknownCount = 0;
+    for (const r of readInYear) {
+      const authors = authorsByBook.get(r.livro_id);
+      if (authors && authors.length) {
+        const anyBrazil = authors.some((a) => {
+          const n = (a.nacionalidade || '').toString().toLowerCase();
+          return n.startsWith('br');
+        });
+        if (anyBrazil) brazilianCount += 1;
+        else foreignCount += 1;
+      } else {
+        unknownCount += 1;
+      }
+    }
+
     const sortedByPages = [...readInYear].filter((r) => pageCount(r) > 0).sort((a, b) => pageCount(b) - pageCount(a));
     const largest = sortedByPages[0] || null;
     const smallest = sortedByPages.length > 0 ? sortedByPages[sortedByPages.length - 1] : null;
@@ -471,6 +489,11 @@ readerRouter.get("/statistics", authMiddleware(), requireRole("leitor"), async (
         { name: "Audiobook", icon: "headphones", count: 0 },
       ],
       languages: readCount > 0 ? [{ name: "Português", code: "pt-BR", count: readCount }] : [],
+      author_nationalities: [
+        { name: 'Brasileiros', code: 'BR', count: brazilianCount },
+        { name: 'Estrangeiros', code: 'OTHER', count: foreignCount },
+        { name: 'Não informado', code: 'UNKNOWN', count: unknownCount },
+      ],
     });
   } catch (err) {
     console.error("Error loading reader statistics:", err);
@@ -1305,6 +1328,7 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
     isbn,
     add_to_shelf,
     shelf_status,
+    author_nationality,
   } = req.body || {};
 
   if (!titulo || !autor) {
@@ -1371,7 +1395,7 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
 
     await AppDataSource.manager.transaction(async (manager) => {
       await manager.save(novoLivro);
-      await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager);
+      await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager, author_nationality ? String(author_nationality).trim() : null);
     });
 
     let readingId: number | null = null;
@@ -1460,7 +1484,7 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
     await AppDataSource.manager.transaction(async (manager) => {
       await manager.save(livro);
       if ("autor" in body) {
-        await syncAuthorsForBook(livro.id, livro.autor, manager);
+        await syncAuthorsForBook(livro.id, livro.autor, manager, body.author_nationality ? String(body.author_nationality).trim() : null);
       }
     });
 

@@ -863,7 +863,7 @@ bookClubRouter.post(
         return res.status(400).json({ message: "O ciclo atual já foi encerrado" });
       }
 
-      const { livro_id, titulo, autor, editora, editora_id, motivo } = req.body ?? {};
+      const { livro_id, titulo, autor, editora, editora_id, motivo, author_nationality } = req.body ?? {};
       const userId = req.user!.id;
       const nominationRepo = AppDataSource.getRepository(BookClubNomination);
       const memberRepo = AppDataSource.getRepository(BookClubMember);
@@ -969,7 +969,7 @@ bookClubRouter.post(
 
         await AppDataSource.manager.transaction(async (manager) => {
           await manager.save(novoLivro);
-          await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager);
+            await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager, author_nationality ? String(author_nationality).trim() : null);
         });
 
         livro = novoLivro;

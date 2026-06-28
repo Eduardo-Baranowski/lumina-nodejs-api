@@ -259,7 +259,7 @@ adminRouter.post("/editoras", upload.single("imagem"), async (req: AuthRequest, 
 });
 
 adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
-  const { editora_id, titulo, autor, genero, descricao, open_library_cover_id, paginas } = req.body || {};
+  const { editora_id, titulo, autor, genero, descricao, open_library_cover_id, paginas, author_nationality } = req.body || {};
 
   if (!editora_id) {
     return res.status(400).json({ message: "A editora é obrigatória" });
@@ -308,7 +308,7 @@ adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res
     novoLivro.imagem = imagem_path;
 
     await libroRepository.save(novoLivro);
-    await syncAuthorsForBook(novoLivro.id, novoLivro.autor);
+      await syncAuthorsForBook(novoLivro.id, novoLivro.autor, undefined, author_nationality ? String(author_nationality).trim() : null);
 
     return res.status(201).json({
       message: "Livro cadastrado com sucesso",
@@ -579,7 +579,7 @@ adminRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest, 
 
     await libroRepository.save(livro);
     if ("autor" in body) {
-      await syncAuthorsForBook(livro.id, livro.autor);
+      await syncAuthorsForBook(livro.id, livro.autor, undefined, body.author_nationality ? String(body.author_nationality).trim() : null);
     }
 
     return res.status(200).json({ message: "Livro atualizado com sucesso" });
