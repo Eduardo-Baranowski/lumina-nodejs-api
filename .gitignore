@@ -3,3 +3,4 @@ dist/
 .env
 static/uploads/
 *.log
+package-lock.json

@@ -19,7 +19,7 @@ import { bookClubRouter } from "./controllers/bookClub";
 import { migrateAllUserImages } from "./utils/image-migration";
 import { runMigrations } from "./utils/runMigrations";
 
-const app = express();
+export const app = express();
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors());
@@ -185,8 +185,8 @@ const handler = async (req: ExpReq, res: ExpRes) => {
 export default handler;
 
 // ─── LOCAL DEV SERVER ─────────────────────────────────────────────────────────
-// Em desenvolvimento local, iniciamos o servidor normalmente.
-if (process.env.NODE_ENV !== "production") {
+// Em desenvolvimento local, iniciamos o servidor normalmente (não em testes).
+if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
   const PORT = parseInt(process.env.PORT || "5000", 10);
   const HOST = "0.0.0.0";
 
