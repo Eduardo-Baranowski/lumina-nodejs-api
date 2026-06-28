@@ -1,8 +1,7 @@
 import { Router, Request, Response } from "express";
-import { AppDataSource } from "../config/database";
-import { User } from "../entities/User";
 import * as bcrypt from "bcryptjs";
 import * as jwt from "jsonwebtoken";
+import { prisma } from "../lib/prisma";
 import { getImageUrl } from "../utils/image";
 
 export const authRouter = Router();
@@ -16,10 +15,8 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     });
   }
 
-  const userRepository = AppDataSource.getRepository(User);
-
   try {
-    const userExists = await userRepository.findOneBy({ email });
+    const userExists = await prisma.user.findUnique({ where: { email } });
     if (userExists) {
       return res.status(400).json({ message: "Email já cadastrado" });
     }
@@ -27,13 +24,14 @@ authRouter.post("/register", async (req: Request, res: Response) => {
     const salt = bcrypt.genSaltSync(10);
     const senha_hash = bcrypt.hashSync(senha, salt);
 
-    const newUser = new User();
-    newUser.nome = nome;
-    newUser.email = email;
-    newUser.senha_hash = senha_hash;
-    newUser.papel = "leitor";
-
-    await userRepository.save(newUser);
+    await prisma.user.create({
+      data: {
+        nome,
+        email,
+        senha_hash,
+        papel: "leitor",
+      },
+    });
 
     return res.status(201).json({
       message: "Leitor cadastrado com sucesso",
@@ -51,11 +49,9 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     return res.status(400).json({ message: "Email e senha são obrigatórios" });
   }
 
-  const userRepository = AppDataSource.getRepository(User);
-
   try {
-    const user = await userRepository.findOneBy({ email });
-    if (!user || !user.verificar_senha(senha)) {
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user || !bcrypt.compareSync(senha, user.senha_hash)) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 

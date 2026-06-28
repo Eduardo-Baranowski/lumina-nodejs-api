@@ -10,14 +10,13 @@ import * as bcrypt from "bcryptjs";
 import { swaggerSpec } from "./config/swagger";
 
 import { AppDataSource } from "./config/database";
-import { User } from "./entities/User";
 import { authRouter } from "./controllers/auth";
 import { adminRouter } from "./controllers/admin";
 import { editorRouter } from "./controllers/editor";
 import { readerRouter } from "./controllers/reader";
 import { bookClubRouter } from "./controllers/bookClub";
 import { migrateAllUserImages } from "./utils/image-migration";
-import { runMigrations } from "./utils/runMigrations";
+import { prisma } from "./lib/prisma";
 
 export const app = express();
 
@@ -124,20 +123,20 @@ async function criarAdminInicial(): Promise<void> {
     return;
   }
 
-  const userRepository = AppDataSource.getRepository(User);
-  const exists = await userRepository.findOneBy({ email: adminEmail });
+  const exists = await prisma.user.findUnique({ where: { email: adminEmail } });
 
   if (!exists) {
     const salt = bcrypt.genSaltSync(10);
     const senha_hash = bcrypt.hashSync(adminSenha, salt);
 
-    const admin = new User();
-    admin.nome = "Administrador Master";
-    admin.email = adminEmail;
-    admin.senha_hash = senha_hash;
-    admin.papel = "admin";
-
-    await userRepository.save(admin);
+    await prisma.user.create({
+      data: {
+        nome: "Administrador Master",
+        email: adminEmail,
+        senha_hash,
+        papel: "admin",
+      },
+    });
     console.log("✓ Admin inicial criado com sucesso.");
   } else {
     console.log("✓ Admin inicial já existe.");
@@ -154,7 +153,6 @@ export async function initializeDb(): Promise<void> {
   if (AppDataSource.isInitialized) return;
   if (!dbInitPromise) {
     dbInitPromise = AppDataSource.initialize()
-      .then(() => runMigrations())
       .then(() => criarAdminInicial())
       .then(async () => {
         // Migrate old images to Cloudinary in production
