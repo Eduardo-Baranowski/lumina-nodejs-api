@@ -855,7 +855,7 @@ bookClubRouter.post(
         return res.status(400).json({ message: "O ciclo atual já foi encerrado" });
       }
 
-      const { livro_id, titulo, autor, editora, motivo } = req.body ?? {};
+      const { livro_id, titulo, autor, editora, editora_id, motivo } = req.body ?? {};
       const userId = req.user!.id;
       const nominationRepo = AppDataSource.getRepository(BookClubNomination);
       const memberRepo = AppDataSource.getRepository(BookClubMember);
@@ -936,16 +936,26 @@ bookClubRouter.post(
         novoLivro.editora_id = null;
         novoLivro.editor_id = null;
 
-        const editoraTrim = String(editora ?? "").trim();
-        if (editoraTrim) {
+        const editoraId = editora_id ? parseInt(editora_id) : null;
+        if (editoraId && !isNaN(editoraId)) {
           const editoraRepo = AppDataSource.getRepository(Editora);
-          const existingEditora = await editoraRepo.findOne({ where: { nome: editoraTrim } });
-          if (existingEditora) {
-            novoLivro.editora_id = existingEditora.id;
-          } else {
-            const novaEditora = editoraRepo.create({ nome: editoraTrim, imagem: null });
-            const savedEditora = await editoraRepo.save(novaEditora);
-            novoLivro.editora_id = savedEditora.id;
+          const existingEditora = await editoraRepo.findOneBy({ id: editoraId });
+          if (!existingEditora) {
+            return res.status(404).json({ message: "Editora não encontrada" });
+          }
+          novoLivro.editora_id = existingEditora.id;
+        } else {
+          const editoraTrim = String(editora ?? "").trim();
+          if (editoraTrim) {
+            const editoraRepo = AppDataSource.getRepository(Editora);
+            const existingEditora = await editoraRepo.findOne({ where: { nome: editoraTrim } });
+            if (existingEditora) {
+              novoLivro.editora_id = existingEditora.id;
+            } else {
+              const novaEditora = editoraRepo.create({ nome: editoraTrim, imagem: null });
+              const savedEditora = await editoraRepo.save(novaEditora);
+              novoLivro.editora_id = savedEditora.id;
+            }
           }
         }
 

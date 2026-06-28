@@ -162,6 +162,80 @@ readerRouter.get("/editors", async (req: Request, res: Response) => {
   }
 });
 
+readerRouter.get("/editoras", async (req: Request, res: Response) => {
+  const editoraRepo = AppDataSource.getRepository(Editora);
+  try {
+    const search = req.query.search ? String(req.query.search).trim() : "";
+    const whereClause = search
+      ? [{ nome: require("typeorm").ILike(`%${search}%`) }]
+      : {};
+
+    const editoras = await editoraRepo.find({
+      where: whereClause,
+      order: { nome: "ASC" },
+    });
+
+    return res.status(200).json(
+      editoras.map((e) => ({
+        id: e.id,
+        nome: e.nome,
+        imagem_url: getImageUrl(req, e.imagem),
+        criado_em: e.criado_em.toISOString(),
+      }))
+    );
+  } catch (err) {
+    console.error("Error listing editoras:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+readerRouter.post("/editoras", authMiddleware(), upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const { nome } = req.body || {};
+  if (!nome || !String(nome).trim()) {
+    return res.status(400).json({ message: "Nome da editora é obrigatório" });
+  }
+
+  const editoraRepository = AppDataSource.getRepository(Editora);
+  const userRepository = AppDataSource.getRepository(User);
+
+  try {
+    const normalizedName = String(nome).trim();
+    const existingEditora = await editoraRepository.findOneBy({ nome: normalizedName });
+    if (existingEditora) {
+      return res.status(400).json({ message: "Já existe uma Editora com este nome" });
+    }
+
+    const existingEditorUser = await userRepository.findOneBy({ nome: normalizedName, papel: "editor" });
+    if (existingEditorUser) {
+      return res.status(400).json({ message: "Já existe um usuário Editor com este nome" });
+    }
+
+    let imagem_path: string | null = null;
+    if (req.file) {
+      imagem_path = await saveImage(req.file, "editoras");
+      if (!imagem_path) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
+    }
+
+    const novaEditora = new Editora();
+    novaEditora.nome = normalizedName;
+    novaEditora.imagem = imagem_path;
+
+    await editoraRepository.save(novaEditora);
+
+    return res.status(201).json({
+      id: novaEditora.id,
+      nome: novaEditora.nome,
+      imagem_url: getImageUrl(req, novaEditora.imagem),
+      criado_em: novaEditora.criado_em.toISOString(),
+    });
+  } catch (err) {
+    console.error("Error creating editora:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
 // 2.1. READER STATISTICS
 readerRouter.get("/statistics", authMiddleware(), requireRole("leitor"), async (req: AuthRequest, res: Response) => {
   const userId = req.user!.id;
