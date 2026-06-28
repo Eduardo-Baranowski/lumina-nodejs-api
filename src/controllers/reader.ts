@@ -1358,6 +1358,17 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
   const libroRepository = AppDataSource.getRepository(Livro);
 
   try {
+    // Validate author_nationality if provided
+    if (author_nationality && String(author_nationality).trim()) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      const exists = await autorRepo
+        .createQueryBuilder('a')
+        .where('a.nacionalidade = :n', { n: String(author_nationality).trim() })
+        .getCount();
+      if (exists === 0) {
+        return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
+      }
+    }
     if (isbn) {
       const existing = await findBookByIsbn(String(isbn));
       if (existing) {
@@ -1503,9 +1514,22 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
     await AppDataSource.manager.transaction(async (manager) => {
       await manager.save(livro);
       if ("autor" in body) {
+        // Validate nationality if provided in update
+        if (body.author_nationality && String(body.author_nationality).trim()) {
+          const autorRepo = AppDataSource.getRepository(Autor);
+          const exists = await autorRepo
+            .createQueryBuilder('a')
+            .where('a.nacionalidade = :n', { n: String(body.author_nationality).trim() })
+            .getCount();
+          if (exists === 0) {
+            throw new Error('invalid_nationality');
+          }
+        }
         await syncAuthorsForBook(livro.id, livro.autor, manager, body.author_nationality ? String(body.author_nationality).trim() : null);
       }
     });
+
+    // If we threw invalid nationality inside transaction, catch and return 400
 
     return res.status(200).json({ message: "Livro atualizado com sucesso" });
   } catch (err) {

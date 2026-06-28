@@ -3,6 +3,7 @@ import { AppDataSource } from "../config/database";
 import { Request as SystemRequest } from "../entities/Request";
 import { Livro } from "../entities/Livro";
 import { User } from "../entities/User";
+import { Autor } from "../entities/Autor";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
@@ -223,6 +224,18 @@ editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, re
     novoLivro.descricao = descricao || null;
     novoLivro.imagem = imagem_path;
 
+    // Validate author_nationality if provided: must exist in known nacionalidades
+    if (author_nationality && String(author_nationality).trim()) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      const count = await autorRepo
+        .createQueryBuilder('a')
+        .where('a.nacionalidade = :n', { n: String(author_nationality).trim() })
+        .getCount();
+      if (count === 0) {
+        return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
+      }
+    }
+
     await libroRepository.save(novoLivro);
     await syncAuthorsForBook(novoLivro.id, novoLivro.autor, undefined, author_nationality ? String(author_nationality).trim() : null);
 
@@ -307,6 +320,18 @@ editorRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest,
     }
 
     await libroRepository.save(livro);
+    // Validate author_nationality on update if provided
+    if ("author_nationality" in body && body.author_nationality && String(body.author_nationality).trim()) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      const count = await autorRepo
+        .createQueryBuilder('a')
+        .where('a.nacionalidade = :n', { n: String(body.author_nationality).trim() })
+        .getCount();
+      if (count === 0) {
+        return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
+      }
+    }
+
     if ("autor" in body) {
       await syncAuthorsForBook(livro.id, livro.autor, undefined, body.author_nationality ? String(body.author_nationality).trim() : null);
     }

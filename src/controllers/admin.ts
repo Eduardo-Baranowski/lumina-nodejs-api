@@ -331,6 +331,16 @@ adminRouter.post("/autores", upload.single("imagem"), async (req: AuthRequest, r
   }
 
   const autorRepo = AppDataSource.getRepository(Autor);
+  // If nacionalidade provided, ensure it is one of the existing nacionalidades (selection-only)
+  if (nacionalidade && String(nacionalidade).trim()) {
+    const exists = await autorRepo
+      .createQueryBuilder('a')
+      .where('a.nacionalidade = :n', { n: String(nacionalidade).trim() })
+      .getCount();
+    if (exists === 0) {
+      return res.status(400).json({ message: 'Nacionalidade inválida: selecione uma das opções existentes' });
+    }
+  }
   try {
     const exists = await autorRepo.findOne({ where: { nome: nome.trim() } });
     if (exists) return res.status(400).json({ message: "Já existe um autor com este nome" });
@@ -369,7 +379,20 @@ adminRouter.put("/autores/:id", upload.single("imagem"), async (req: AuthRequest
 
     if (nome) autor.nome = String(nome).trim();
     if (bio !== undefined) autor.bio = bio || null;
-    if (nacionalidade !== undefined) autor.nacionalidade = nacionalidade || null;
+    if (nacionalidade !== undefined) {
+      if (nacionalidade && String(nacionalidade).trim()) {
+        const exists = await autorRepo
+          .createQueryBuilder('a')
+          .where('a.nacionalidade = :n', { n: String(nacionalidade).trim() })
+          .getCount();
+        if (exists === 0) {
+          return res.status(400).json({ message: 'Nacionalidade inválida: selecione uma das opções existentes' });
+        }
+        autor.nacionalidade = String(nacionalidade).trim();
+      } else {
+        autor.nacionalidade = null;
+      }
+    }
 
     if (req.file) {
       const saved = await saveImage(req.file, "autores");
@@ -423,6 +446,17 @@ adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res
   const libroRepository = AppDataSource.getRepository(Livro);
 
   try {
+    // Validate author_nationality if provided: must exist in known nacionalidades
+    if (author_nationality && String(author_nationality).trim()) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      const exists = await autorRepo
+        .createQueryBuilder('a')
+        .where('a.nacionalidade = :n', { n: String(author_nationality).trim() })
+        .getCount();
+      if (exists === 0) {
+        return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
+      }
+    }
     const editoraExists = await editoraRepository.findOneBy({ id: editoraInt });
     if (!editoraExists) {
       return res.status(404).json({ message: "Editora não encontrada" });
@@ -722,6 +756,18 @@ adminRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest, 
           }
           livro.imagem = newPath;
         }
+      }
+    }
+
+    // Validate author_nationality on update if provided
+    if ("author_nationality" in body && body.author_nationality && String(body.author_nationality).trim()) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      const count = await autorRepo
+        .createQueryBuilder('a')
+        .where('a.nacionalidade = :n', { n: String(body.author_nationality).trim() })
+        .getCount();
+      if (count === 0) {
+        return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
       }
     }
 

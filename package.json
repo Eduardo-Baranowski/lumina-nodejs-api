@@ -9,6 +9,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "migrate": "ts-node src/scripts/migrate.ts",
     "vercel-build": "tsc && ts-node src/scripts/migrate.ts",
+    "seed:nacionalidades": "ts-node src/scripts/seed_nacionalidades.ts",
     "test": "cross-env NODE_ENV=test jest --runInBand",
     "test:watch": "cross-env NODE_ENV=test jest --watch --runInBand",
     "test:coverage": "cross-env NODE_ENV=test jest --coverage --runInBand"
