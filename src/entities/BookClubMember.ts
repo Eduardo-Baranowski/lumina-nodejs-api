@@ -28,6 +28,9 @@ export class BookClubMember {
   @Column({ type: "varchar", length: 20, default: "active" })
   status: string; // 'active', 'pending_approval'
 
+  @Column({ type: "boolean", default: false })
+  allow_multiple_nominations: boolean;
+
   @CreateDateColumn({ type: "timestamp" })
   criado_em: Date;
 

@@ -51,6 +51,10 @@ function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function canNominateMore(member: BookClubMember | null, user: { papel?: string } | null | undefined): boolean {
+  return user?.papel === "admin" || member?.papel === "dono" || member?.allow_multiple_nominations === true;
+}
+
 async function findBookByTitleAndAuthor(title: string, author: string): Promise<Livro | null> {
   return AppDataSource.getRepository(Livro)
     .createQueryBuilder("livro")
@@ -463,6 +467,7 @@ bookClubRouter.get("/:clubId/members", authMiddleware(), checkClubMember, async 
       id: m.id,
       user_id: m.user_id,
       papel: m.papel,
+      allow_multiple_nominations: m.allow_multiple_nominations,
       criado_em: m.criado_em,
       user: {
         id: m.user.id,
@@ -477,6 +482,54 @@ bookClubRouter.get("/:clubId/members", authMiddleware(), checkClubMember, async 
     res.status(500).json({ message: "Erro ao buscar membros do clube" });
   }
 });
+
+// ─── PUT /:clubId/members/:memberId/allow-multiple-nominations (Dono ou admin) ───────────
+bookClubRouter.put(
+  "/:clubId/members/:memberId/allow-multiple-nominations",
+  authMiddleware(),
+  checkClubOwner,
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const clubId = parseInt(req.params.clubId);
+      const memberId = parseInt(req.params.memberId);
+      const { allow_multiple_nominations } = req.body ?? {};
+      if (typeof allow_multiple_nominations !== "boolean") {
+        return res.status(400).json({ message: "Informe allow_multiple_nominations como booleano" });
+      }
+
+      const memberRepo = AppDataSource.getRepository(BookClubMember);
+      const member = await memberRepo.findOne({
+        where: { id: memberId, book_club_id: clubId, status: "active" },
+        relations: ["user"],
+      });
+      if (!member) {
+        return res.status(404).json({ message: "Membro não encontrado" });
+      }
+      if (member.papel === "dono") {
+        return res.status(400).json({ message: "Não é possível alterar permissões do dono do clube" });
+      }
+
+      member.allow_multiple_nominations = allow_multiple_nominations;
+      await memberRepo.save(member);
+
+      res.json({
+        id: member.id,
+        user_id: member.user_id,
+        papel: member.papel,
+        allow_multiple_nominations: member.allow_multiple_nominations,
+        criado_em: member.criado_em,
+        user: {
+          id: member.user.id,
+          nome: member.user.nome,
+          imagem_url: getImageUrl(req, member.user.imagem),
+        },
+      });
+    } catch (err) {
+      console.error("Update member nomination permission error:", err);
+      res.status(500).json({ message: "Erro ao atualizar permissão de indicação" });
+    }
+  }
+);
 
 // ─── GET /:clubId/requests (Listar solicitações pendentes - Dono) ────────────
 bookClubRouter.get("/:clubId/requests", authMiddleware(), checkClubOwner, async (req: AuthRequest, res: Response) => {
@@ -642,14 +695,20 @@ bookClubRouter.get("/:clubId/hub", authMiddleware(true), checkClubMember, async 
       )
     );
 
+    const member = userId
+      ? await AppDataSource.getRepository(BookClubMember).findOneBy({ book_club_id: clubId, user_id: userId })
+      : null;
+
     let userStats: any = null;
     if (userId) {
       const myVotes = await getUserVotesInCycle(cycle.id, userId);
       const myNomination = nominations.find((n) => n.user_id === userId);
+      const allowMultiple = canNominateMore(member, req.user);
       userStats = {
         votes_used: myVotes.length,
         votes_remaining: MAX_VOTES_PER_CYCLE - myVotes.length,
         has_nominated: myNomination != null,
+        can_nominate: allowMultiple || myNomination == null,
         my_nomination_id: myNomination?.id ?? null,
       };
     }
@@ -798,9 +857,12 @@ bookClubRouter.post(
       const { livro_id, titulo, autor, motivo } = req.body ?? {};
       const userId = req.user!.id;
       const nominationRepo = AppDataSource.getRepository(BookClubNomination);
+      const memberRepo = AppDataSource.getRepository(BookClubMember);
+      const member = await memberRepo.findOneBy({ book_club_id: clubId, user_id: userId });
 
       const existing = await nominationRepo.findOneBy({ cycle_id: cycle.id, user_id: userId });
-      if (existing) {
+      const allowMultiple = canNominateMore(member, req.user);
+      if (existing && !allowMultiple) {
         return res.status(400).json({ message: "Você já indicou um livro neste ciclo" });
       }
 
