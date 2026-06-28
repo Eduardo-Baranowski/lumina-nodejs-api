@@ -271,6 +271,50 @@ adminRouter.post("/editoras", upload.single("imagem"), async (req: AuthRequest, 
   }
 });
 
+adminRouter.put("/editoras/:id", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
+  const editoraId = parseInt(req.params.id);
+  const editoraRepository = AppDataSource.getRepository(Editora);
+  const { nome } = req.body || {};
+
+  try {
+    const editora = await editoraRepository.findOneBy({ id: editoraId });
+    if (!editora) {
+      return res.status(404).json({ message: "Editora não encontrada" });
+    }
+
+    if (nome !== undefined) {
+      if (!nome || !String(nome).trim()) {
+        return res.status(400).json({ message: "Nome da editora não pode ficar em branco" });
+      }
+      editora.nome = String(nome).trim();
+    }
+
+    if (req.file) {
+      const saved = await saveImage(req.file, "editoras");
+      if (!saved) {
+        return res.status(400).json({ message: UNSUPPORTED_IMAGE_MESSAGE });
+      }
+      if (editora.imagem) {
+        deleteImage(editora.imagem);
+      }
+      editora.imagem = saved;
+    }
+
+    await editoraRepository.save(editora);
+
+    return res.status(200).json({
+      message: "Editora atualizada com sucesso",
+      id: editora.id,
+      nome: editora.nome,
+      imagem_url: getImageUrl(req, editora.imagem),
+      criado_em: editora.criado_em.toISOString(),
+    });
+  } catch (err) {
+    console.error("Error updating editora:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
 // ---------- AUTORES (Admin CRUD) ----------
 adminRouter.get("/autores", async (req: AuthRequest, res: Response) => {
   const autorRepo = AppDataSource.getRepository(Autor);
