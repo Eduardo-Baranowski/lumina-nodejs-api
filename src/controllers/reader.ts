@@ -213,11 +213,8 @@ readerRouter.post("/editoras", authMiddleware(), upload.single("imagem"), async 
       });
     }
 
-    const existingEditorUser = await userRepository.findOneBy({ nome: normalizedName, papel: "editor" });
-    if (existingEditorUser) {
-      return res.status(400).json({ message: "Já existe um usuário Editor com este nome" });
-    }
-
+    // Legacy note: alguns nomes de editoras podem existir apenas como usuário editor em dados antigos.
+    // Não bloqueamos o cadastro por essa condição, desde que não exista uma editora com o mesmo nome.
     let imagem_path: string | null = null;
     if (req.file) {
       imagem_path = await saveImage(req.file, "editoras");
