@@ -166,6 +166,7 @@ async function nominationPayload(
       ? getImageUrl(req, nomination.livro.imagem)
       : null;
   const genero = nomination.livro?.genero ?? null;
+  const publisher = nomination.livro?.editora;
 
   return {
     id: nomination.id,
@@ -176,6 +177,8 @@ async function nominationPayload(
     imagem_url: imagemUrl,
     livro_id: nomination.livro_id,
     motivo: nomination.motivo,
+    editora: publisher?.nome ?? null,
+    editora_imagem_url: publisher ? getImageUrl(req, publisher.imagem) : null,
     votes_count: votesCount,
     voted_by_me: votedByMe,
     indicado_por: {
@@ -247,7 +250,12 @@ async function getFeaturedBook(cycleId: number, req: Request) {
   const cycleRepo = AppDataSource.getRepository(BookClubCycle);
   const drawn = await cycleRepo.findOne({
     where: { status: "sorteado", book_club_id: cycleId },
-    relations: ["nomination_vencedora", "nomination_vencedora.user", "nomination_vencedora.livro"],
+    relations: [
+      "nomination_vencedora",
+      "nomination_vencedora.user",
+      "nomination_vencedora.livro",
+      "nomination_vencedora.livro.editora",
+    ],
     order: { data_sorteio: "DESC" },
   });
 
@@ -669,7 +677,7 @@ bookClubRouter.get("/:clubId/hub", authMiddleware(true), checkClubMember, async 
 
     const nominations = await nominationRepo.find({
       where: { cycle_id: cycle.id },
-      relations: ["user", "livro"],
+      relations: ["user", "livro", "livro.editora"],
       order: { criado_em: "DESC" },
     });
 
@@ -719,7 +727,7 @@ bookClubRouter.get("/:clubId/hub", authMiddleware(true), checkClubMember, async 
         ? await (async () => {
             const winner = await nominationRepo.findOne({
               where: { id: cycle.nomination_vencedora_id! },
-              relations: ["user", "livro"],
+              relations: ["user", "livro", "livro.editora"],
             });
             if (!winner) return null;
             const votes = await countVotesForNomination(winner.id);
@@ -980,7 +988,7 @@ bookClubRouter.post(
       const saved = await nominationRepo.save(nomination);
       const full = await nominationRepo.findOne({
         where: { id: saved.id },
-        relations: ["user", "livro"],
+        relations: ["user", "livro", "livro.editora"],
       });
 
       res.status(201).json(await nominationPayload(full!, 0, false, req));
