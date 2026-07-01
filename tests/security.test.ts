@@ -29,6 +29,10 @@ describe("authMiddleware", () => {
     authMiddleware()(req, res, next);
 
     expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({
+      message: "Cabeçalho Authorization ausente",
+      msg: "Cabeçalho Authorization ausente",
+    });
     expect(next).not.toHaveBeenCalled();
   });
 
@@ -40,6 +44,10 @@ describe("authMiddleware", () => {
     authMiddleware()(req, res, next);
 
     expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({
+      message: "Token inválido ou expirado",
+      msg: "Token inválido ou expirado",
+    });
     expect(next).not.toHaveBeenCalled();
   });
 

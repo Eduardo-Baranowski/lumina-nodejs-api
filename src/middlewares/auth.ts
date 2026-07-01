@@ -16,8 +16,8 @@ export const authMiddleware = (optional = false) => {
         return next();
       }
       return res.status(401).json({
-        message: "Missing Authorization Header",
-        msg: "Missing Authorization Header",
+        message: "Cabeçalho Authorization ausente",
+        msg: "Cabeçalho Authorization ausente",
       });
     }
 
@@ -37,8 +37,8 @@ export const authMiddleware = (optional = false) => {
         return next();
       }
       return res.status(401).json({
-        message: "Invalid or expired token",
-        msg: "Invalid or expired token",
+        message: "Token inválido ou expirado",
+        msg: "Token inválido ou expirado",
       });
     }
   };
