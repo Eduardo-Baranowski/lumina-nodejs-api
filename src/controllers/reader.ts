@@ -1202,28 +1202,24 @@ readerRouter.get("/search", async (req: Request, res: Response) => {
   const genero = String(req.query.genero || "").trim();
   const limit = Math.max(1, Math.min(25, parseInt(String(req.query.limit || "8")) || 8));
 
-  if (!q && !genero) {
-    return res.status(200).json({ books: [], users: [], editors: [] });
-  }
-
   const libroRepo = AppDataSource.getRepository(Livro);
   const userRepo = AppDataSource.getRepository(User);
 
+  const bookQB = libroRepo.createQueryBuilder("livro")
+    .leftJoinAndSelect("livro.editor", "editor");
+
+  if (q) {
+    bookQB.andWhere(
+      "(livro.titulo ILIKE :likeQ OR livro.autor ILIKE :likeQ OR livro.descricao ILIKE :likeQ OR editor.nome ILIKE :likeQ)",
+      { likeQ: `%${q}%` }
+    );
+  }
+
+  if (genero) {
+    bookQB.andWhere("livro.genero ILIKE :genero", { genero });
+  }
+
   try {
-    const bookQB = libroRepo.createQueryBuilder("livro")
-      .leftJoinAndSelect("livro.editor", "editor");
-
-    if (q) {
-      bookQB.andWhere(
-        "(livro.titulo ILIKE :likeQ OR livro.autor ILIKE :likeQ OR livro.descricao ILIKE :likeQ OR editor.nome ILIKE :likeQ)",
-        { likeQ: `%${q}%` }
-      );
-    }
-
-    if (genero) {
-      bookQB.andWhere("livro.genero ILIKE :genero", { genero });
-    }
-
     const books = await bookQB.orderBy("livro.titulo", "ASC").take(limit).getMany();
 
     let users: User[] = [];
