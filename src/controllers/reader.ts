@@ -1393,8 +1393,15 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
         return res.status(404).json({ message: 'Autor não encontrado' });
       }
       nationalityToSync = selectedAuthor.nacionalidade || null;
-    } else {
-      if (author_nationality && String(author_nationality).trim()) {
+    } else if (autor) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      selectedAuthor = await autorRepo
+        .createQueryBuilder('autor')
+        .where('LOWER(autor.nome) = LOWER(:nome)', { nome: String(autor).trim() })
+        .getOne();
+      if (selectedAuthor) {
+        nationalityToSync = selectedAuthor.nacionalidade || null;
+      } else if (author_nationality && String(author_nationality).trim()) {
         const exists = await nationalityExists(String(author_nationality).trim());
         if (!exists) {
           return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
@@ -1533,6 +1540,7 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
 
     if ("titulo" in body) livro.titulo = String(body.titulo).trim();
     if ("autor" in body) livro.autor = String(body.autor).trim();
+    if ("autor_id" in body) livro.autor = livro.autor; // autor_id handled below
     if ("genero" in body) livro.genero = body.genero || null;
     if ("descricao" in body) livro.descricao = body.descricao || null;
     if ("isbn" in body) {
@@ -1566,21 +1574,38 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
       }
     }
 
+    let selectedAuthor: Autor | null = null;
+    let nationalityToSync: string | null = null;
+    if ("autor_id" in body && body.autor_id) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      selectedAuthor = await autorRepo.findOneBy({ id: parseInt(String(body.autor_id)) });
+      if (!selectedAuthor) {
+        return res.status(404).json({ message: 'Autor não encontrado' });
+      }
+      nationalityToSync = selectedAuthor.nacionalidade || null;
+      livro.autor = selectedAuthor.nome;
+    } else if ("autor" in body && String(body.autor).trim()) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      selectedAuthor = await autorRepo
+        .createQueryBuilder('autor')
+        .where('LOWER(autor.nome) = LOWER(:nome)', { nome: String(body.autor).trim() })
+        .getOne();
+      if (selectedAuthor) {
+        nationalityToSync = selectedAuthor.nacionalidade || null;
+        livro.autor = selectedAuthor.nome;
+      } else if (body.author_nationality && String(body.author_nationality).trim()) {
+        const exists = await nationalityExists(String(body.author_nationality).trim());
+        if (!exists) {
+          throw new Error('invalid_nationality');
+        }
+        nationalityToSync = String(body.author_nationality).trim();
+      }
+    }
+
     await AppDataSource.manager.transaction(async (manager) => {
       await manager.save(livro);
-      if ("autor" in body) {
-        // Validate nationality if provided in update
-        if (body.author_nationality && String(body.author_nationality).trim()) {
-          const autorRepo = AppDataSource.getRepository(Autor);
-          const exists = await autorRepo
-            .createQueryBuilder('a')
-            .where('a.nacionalidade = :n', { n: String(body.author_nationality).trim() })
-            .getCount();
-          if (exists === 0) {
-            throw new Error('invalid_nationality');
-          }
-        }
-        await syncAuthorsForBook(livro.id, livro.autor, manager, body.author_nationality ? String(body.author_nationality).trim() : null);
+      if (selectedAuthor || "autor" in body) {
+        await syncAuthorsForBook(livro.id, livro.autor, manager, nationalityToSync);
       }
     });
 
