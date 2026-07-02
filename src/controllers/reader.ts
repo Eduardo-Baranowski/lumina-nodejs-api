@@ -1362,6 +1362,7 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
   const {
     titulo,
     autor,
+    autor_id,
     genero,
     descricao,
     open_library_cover_id,
@@ -1374,7 +1375,7 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
     editora_id,
   } = req.body || {};
 
-  if (!titulo || !autor) {
+  if (!titulo || (!autor && !autor_id)) {
     return res.status(400).json({ message: "Título e autor são obrigatórios" });
   }
 
@@ -1382,11 +1383,23 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
   const libroRepository = AppDataSource.getRepository(Livro);
 
   try {
-    // Validate author_nationality if provided
-    if (author_nationality && String(author_nationality).trim()) {
-      const exists = await nationalityExists(String(author_nationality).trim());
-      if (!exists) {
-        return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
+    let nationalityToSync: string | null = null;
+    let selectedAuthor: Autor | null = null;
+
+    if (autor_id) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      selectedAuthor = await autorRepo.findOneBy({ id: parseInt(String(autor_id)) });
+      if (!selectedAuthor) {
+        return res.status(404).json({ message: 'Autor não encontrado' });
+      }
+      nationalityToSync = selectedAuthor.nacionalidade || null;
+    } else {
+      if (author_nationality && String(author_nationality).trim()) {
+        const exists = await nationalityExists(String(author_nationality).trim());
+        if (!exists) {
+          return res.status(400).json({ message: 'Nacionalidade do autor inválida: selecione uma opção existente' });
+        }
+        nationalityToSync = String(author_nationality).trim();
       }
     }
     if (isbn) {
@@ -1433,7 +1446,7 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
     const novoLivro = new Livro();
     novoLivro.submitted_by_id = userId;
     novoLivro.titulo = String(titulo).trim();
-    novoLivro.autor = String(autor).trim();
+    novoLivro.autor = selectedAuthor ? selectedAuthor.nome : String(autor).trim();
     novoLivro.preco = "0.00";
     novoLivro.estoque = 0;
     novoLivro.paginas = paginasInt;
@@ -1467,7 +1480,7 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
 
     await AppDataSource.manager.transaction(async (manager) => {
       await manager.save(novoLivro);
-      await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager, author_nationality ? String(author_nationality).trim() : null);
+      await syncAuthorsForBook(novoLivro.id, novoLivro.autor, manager, nationalityToSync);
     });
 
     let readingId: number | null = null;
