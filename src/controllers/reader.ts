@@ -1551,6 +1551,34 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
       livro.paginas = isNaN(paginasInt) ? 0 : paginasInt;
     }
 
+    if ("editora_id" in body) {
+      const editoraId = parseInt(String(body.editora_id));
+      if (isNaN(editoraId)) {
+        return res.status(400).json({ message: "editora inválida" });
+      }
+      const editoraRepo = AppDataSource.getRepository(Editora);
+      const existingEditora = await editoraRepo.findOneBy({ id: editoraId });
+      if (!existingEditora) {
+        return res.status(404).json({ message: "Editora não encontrada" });
+      }
+      livro.editora_id = existingEditora.id;
+    } else if ("editora" in body) {
+      const editoraTrim = String(body.editora || "").trim();
+      if (editoraTrim) {
+        const editoraRepo = AppDataSource.getRepository(Editora);
+        const existingEditora = await editoraRepo.findOne({ where: { nome: editoraTrim } });
+        if (existingEditora) {
+          livro.editora_id = existingEditora.id;
+        } else {
+          const novaEditora = editoraRepo.create({ nome: editoraTrim, imagem: null });
+          const savedEditora = await editoraRepo.save(novaEditora);
+          livro.editora_id = savedEditora.id;
+        }
+      } else {
+        livro.editora_id = null;
+      }
+    }
+
     if (req.file) {
       const saved = await saveImage(req.file, "books");
       if (!saved) {
@@ -1624,17 +1652,21 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
 // SEARCH AUTHORS
 readerRouter.get("/autores/search", async (req: Request, res: Response) => {
   const q = String(req.query.q || "").trim();
-  if (q.length < 2) {
+  if (q.length === 1) {
     return res.status(200).json({ items: [] });
   }
 
   try {
-    const autores = await AppDataSource.getRepository(Autor)
+    const builder = AppDataSource.getRepository(Autor)
       .createQueryBuilder("autor")
-      .where("autor.nome ILIKE :q", { q: `%${q}%` })
       .orderBy("autor.nome", "ASC")
-      .take(15)
-      .getMany();
+      .take(15);
+
+    if (q.length >= 2) {
+      builder.where("autor.nome ILIKE :q", { q: `%${q}%` });
+    }
+
+    const autores = await builder.getMany();
 
     return res.status(200).json({
       items: autores.map((a) => ({ id: a.id, nome: a.nome })),
@@ -1751,6 +1783,7 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
       estoque: book.estoque,
       paginas: book.paginas,
       editor_id: book.editor_id,
+      editora_id: book.editora_id,
       submitted_by_id: book.submitted_by_id,
       can_edit,
       status_estoque: book.estoque <= 0 ? "esgotado" : book.estoque <= 3 ? "baixo" : "disponivel",
