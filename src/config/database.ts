@@ -22,6 +22,7 @@ import { Editora } from "../entities/Editora";
 import { Autor } from "../entities/Autor";
 import { LivroAutor } from "../entities/LivroAutor";
 import { Nacionalidade } from "../entities/Nacionalidade";
+import { Frase } from "../entities/Frase";
 import * as dotenv from "dotenv";
 
 dotenv.config();
@@ -62,6 +63,7 @@ export const AppDataSource = new DataSource({
     Autor,
     LivroAutor,
     Nacionalidade,
+    Frase,
   ],
   subscribers: [],
   migrations: [],

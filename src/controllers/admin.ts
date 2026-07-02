@@ -6,11 +6,12 @@ import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
-import { syncAuthorsForBook, nationalityExists, getAuthorsForBook } from "../services/authorService";
+import { syncAuthorsForBook, nationalityExists, getAuthorsForBook, buildBookAuthorPayload } from "../services/authorService";
 import * as bcrypt from "bcryptjs";
 import { Editora } from "../entities/Editora";
 import { Autor } from "../entities/Autor";
 import { Nacionalidade } from "../entities/Nacionalidade";
+import { Frase } from "../entities/Frase";
 import multer from "multer";
 import * as path from "path";
 
@@ -672,6 +673,83 @@ adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res
   }
 });
 
+adminRouter.get("/frases", async (req: AuthRequest, res: Response) => {
+  const fraseRepo = AppDataSource.getRepository(Frase);
+  try {
+    const frases = await fraseRepo.find({ order: { criado_em: "DESC" } });
+    return res.status(200).json(frases.map((f) => ({
+      id: f.id,
+      texto: f.texto,
+      autor: f.autor,
+      livro: f.livro,
+      ativo: f.ativo,
+      criado_em: f.criado_em ? f.criado_em.toISOString() : null,
+    })));
+  } catch (err) {
+    console.error("Error listing frases:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.post("/frases", async (req: AuthRequest, res: Response) => {
+  const { texto, autor, livro, ativo } = req.body || {};
+  if (!texto || !String(texto).trim()) {
+    return res.status(400).json({ message: "O texto da frase é obrigatório" });
+  }
+
+  const fraseRepo = AppDataSource.getRepository(Frase);
+  try {
+    const frase = fraseRepo.create({
+      texto: String(texto).trim(),
+      autor: autor ? String(autor).trim() : null,
+      livro: livro ? String(livro).trim() : null,
+      ativo: ativo === undefined ? true : Boolean(ativo),
+    });
+    await fraseRepo.save(frase);
+    return res.status(201).json({ message: "Frase cadastrada com sucesso", id: frase.id });
+  } catch (err) {
+    console.error("Error creating frase:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.put("/frases/:id", async (req: AuthRequest, res: Response) => {
+  const fraseId = parseInt(req.params.id);
+  const fraseRepo = AppDataSource.getRepository(Frase);
+  const { texto, autor, livro, ativo } = req.body || {};
+
+  try {
+    const frase = await fraseRepo.findOneBy({ id: fraseId });
+    if (!frase) return res.status(404).json({ message: "Frase não encontrada" });
+
+    if (texto !== undefined) frase.texto = String(texto).trim();
+    if (autor !== undefined) frase.autor = autor ? String(autor).trim() : null;
+    if (livro !== undefined) frase.livro = livro ? String(livro).trim() : null;
+    if (ativo !== undefined) frase.ativo = Boolean(ativo);
+
+    await fraseRepo.save(frase);
+    return res.status(200).json({ message: "Frase atualizada com sucesso" });
+  } catch (err) {
+    console.error("Error updating frase:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
+adminRouter.delete("/frases/:id", async (req: AuthRequest, res: Response) => {
+  const fraseId = parseInt(req.params.id);
+  const fraseRepo = AppDataSource.getRepository(Frase);
+
+  try {
+    const frase = await fraseRepo.findOneBy({ id: fraseId });
+    if (!frase) return res.status(404).json({ message: "Frase não encontrada" });
+    await fraseRepo.remove(frase);
+    return res.status(200).json({ message: "Frase removida com sucesso" });
+  } catch (err) {
+    console.error("Error deleting frase:", err);
+    return res.status(500).json({ message: "Erro interno no servidor" });
+  }
+});
+
 adminRouter.get("/reports", async (req: AuthRequest, res: Response) => {
   const userRepository = AppDataSource.getRepository(User);
   const libroRepository = AppDataSource.getRepository(Livro);
@@ -780,10 +858,15 @@ adminRouter.get("/books", async (req: AuthRequest, res: Response) => {
         }
 
         const authorNationality = await getBookAuthorNationality(b.id);
+        const authorPayload = buildBookAuthorPayload({
+          autor: b.autor,
+          autores: (await getAuthorsForBook(b.id)).map((a) => ({ id: a.id, nome: a.nome })),
+        });
         return {
           id: b.id,
           titulo: b.titulo,
-          autor: b.autor,
+          autor: authorPayload.autor,
+          autores: authorPayload.autores,
           author_nationality: authorNationality,
           editor_nome: editorNome,
           editor_id: b.editor_id,
@@ -831,10 +914,15 @@ adminRouter.get("/books/:id", async (req: AuthRequest, res: Response) => {
     }
 
     const authorNationality = await getBookAuthorNationality(book.id);
+    const authorPayload = buildBookAuthorPayload({
+      autor: book.autor,
+      autores: (await getAuthorsForBook(book.id)).map((a) => ({ id: a.id, nome: a.nome })),
+    });
     return res.status(200).json({
       id: book.id,
       titulo: book.titulo,
-      autor: book.autor,
+      autor: authorPayload.autor,
+      autores: authorPayload.autores,
       author_nationality: authorNationality,
       editor_nome: editorNome,
       editor_id: book.editor_id,

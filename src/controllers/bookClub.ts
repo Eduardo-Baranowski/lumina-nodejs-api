@@ -52,6 +52,46 @@ function normalizeText(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+async function wasBookPreviouslyDrawn(
+  clubId: number,
+  livroId?: number | null,
+  titulo?: string | null,
+  autor?: string | null
+): Promise<boolean> {
+  const cycleRepo = AppDataSource.getRepository(BookClubCycle);
+  let qb = cycleRepo
+    .createQueryBuilder("cycle")
+    .innerJoin("cycle.nomination_vencedora", "nomination")
+    .where("cycle.book_club_id = :clubId", { clubId })
+    .andWhere("cycle.status = :status", { status: "sorteado" });
+
+  if (livroId) {
+    qb = qb.andWhere("nomination.livro_id = :livroId", { livroId });
+  } else if (titulo && autor) {
+    qb = qb
+      .andWhere("LOWER(TRIM(nomination.titulo)) = :titulo", { titulo: normalizeText(titulo) })
+      .andWhere("LOWER(TRIM(nomination.autor)) = :autor", { autor: normalizeText(autor) });
+  } else {
+    return false;
+  }
+
+  return (await qb.getCount()) > 0;
+}
+
+async function processAutoDrawForCycle(cycle: BookClubCycle): Promise<BookClubCycle> {
+  if (cycle.status !== "votacao") return cycle;
+  if (!cycle.data_fim_votacao || new Date() < cycle.data_fim_votacao) return cycle;
+
+  const nominationCount = await AppDataSource.getRepository(BookClubNomination).countBy({ cycle_id: cycle.id });
+  if (nominationCount === 0) {
+    cycle.status = "encerrado";
+    return AppDataSource.getRepository(BookClubCycle).save(cycle);
+  }
+
+  await performDraw(cycle);
+  return cycle;
+}
+
 function canNominateMore(member: BookClubMember | null, user: { papel?: string } | null | undefined): boolean {
   return user?.papel === "admin" || member?.papel === "dono" || member?.allow_multiple_nominations === true;
 }
@@ -137,7 +177,7 @@ async function getOrCreateActiveCycle(clubId: number): Promise<BookClubCycle> {
     order: { data_inicio: "DESC" },
   });
 
-  if (cycle) return cycle;
+  if (cycle) return processAutoDrawForCycle(cycle);
 
   const now = new Date();
   cycle = repo.create({
@@ -896,11 +936,17 @@ bookClubRouter.post(
       }
 
       if (livro?.id) {
+        if (await wasBookPreviouslyDrawn(clubId, livro.id, null, null)) {
+          return res.status(400).json({ message: "Este livro já foi sorteado em um ciclo anterior" });
+        }
         const duplicate = await nominationRepo.findOneBy({ cycle_id: cycle.id, livro_id: livro.id });
         if (duplicate) {
           return res.status(400).json({ message: "Este livro já foi indicado neste ciclo" });
         }
       } else if (!livro && tituloTrim && autorTrim) {
+        if (await wasBookPreviouslyDrawn(clubId, null, tituloTrim, autorTrim)) {
+          return res.status(400).json({ message: "Esta obra já foi sorteada em um ciclo anterior" });
+        }
         const duplicate = await nominationRepo
           .createQueryBuilder("nomination")
           .where("nomination.cycle_id = :cycleId", { cycleId: cycle.id })

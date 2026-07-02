@@ -23,9 +23,11 @@ import {
   getAuthorStats,
   nationalityExists,
   getAllNationalities,
+  buildBookAuthorPayload,
 } from "../services/authorService";
 import { Autor } from "../entities/Autor";
 import { Editora } from "../entities/Editora";
+import { Frase } from "../entities/Frase";
 import { LivroAutor } from "../entities/LivroAutor";
 import * as path from "path";
 import { sseHub, sseHandler } from "../realtime/hub";
@@ -120,9 +122,24 @@ const compactBook = (req: Request, livro?: Livro | null, extra: Record<string, a
 
 // 1. RANDOM QUOTE
 readerRouter.get("/random-quote", async (req: Request, res: Response) => {
+  const fraseRepo = AppDataSource.getRepository(Frase);
   const lecturaRepo = AppDataSource.getRepository(Leitura);
 
   try {
+    const frase = await fraseRepo
+      .createQueryBuilder("frase")
+      .where("frase.ativo = true")
+      .orderBy("RANDOM()")
+      .getOne();
+
+    if (frase) {
+      return res.status(200).json({
+        quote: frase.texto,
+        author: frase.autor || "Autor desconhecido",
+        book: frase.livro || "Livro desconhecido",
+      });
+    }
+
     const leitura = await lecturaRepo
       .createQueryBuilder("leitura")
       .leftJoinAndSelect("leitura.livro", "livro")
@@ -131,18 +148,19 @@ readerRouter.get("/random-quote", async (req: Request, res: Response) => {
       .getOne();
 
     if (leitura && leitura.livro) {
+      const bookAuthors = await getAuthorsForBook(leitura.livro.id);
+      const authorPayload = buildBookAuthorPayload({
+        autor: leitura.livro.autor,
+        autores: bookAuthors.map((a) => ({ id: a.id, nome: a.nome })),
+      });
       return res.status(200).json({
         quote: leitura.comentario,
-        author: leitura.livro.autor,
+        author: authorPayload.autor,
         book: leitura.livro.titulo,
       });
     }
 
-    return res.status(200).json({
-      quote: "Eles passarão... Eu passarinho!",
-      author: "Mário Quintana",
-      book: "A Rua dos Cataventos",
-    });
+    return res.status(404).json({ message: "Nenhuma frase real disponível no momento" });
   } catch (err) {
     console.error("Error fetching random quote:", err);
     return res.status(500).json({ message: "Erro interno no servidor" });
@@ -1242,17 +1260,23 @@ readerRouter.get("/search", async (req: Request, res: Response) => {
     }
 
     return res.status(200).json({
-      books: books.map((b) => ({
-        id: b.id,
-        titulo: b.titulo,
-        autor: b.autor,
-        genero: b.genero,
-        preco: b.preco,
-        estoque: b.estoque,
-        editor_id: b.editor_id,
-        status_estoque: b.estoque <= 0 ? "esgotado" : b.estoque <= 3 ? "baixo" : "disponivel",
-        imagem_url: getImageUrl(req, b.imagem),
-        editora: b.editor ? b.editor.nome : "",
+      books: await Promise.all(books.map(async (b) => {
+        const authorPayload = buildBookAuthorPayload({
+          autor: b.autor,
+          autores: (await getAuthorsForBook(b.id)).map((a) => ({ id: a.id, nome: a.nome })),
+        });
+        return {
+          id: b.id,
+          titulo: b.titulo,
+          autor: authorPayload.autor,
+          genero: b.genero,
+          preco: b.preco,
+          estoque: b.estoque,
+          editor_id: b.editor_id,
+          status_estoque: b.estoque <= 0 ? "esgotado" : b.estoque <= 3 ? "baixo" : "disponivel",
+          imagem_url: getImageUrl(req, b.imagem),
+          editora: b.editor ? b.editor.nome : "",
+        };
       })),
       users: users.map((u) => ({
         id: u.id,
@@ -1346,6 +1370,8 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
     add_to_shelf,
     shelf_status,
     author_nationality,
+    editora,
+    editora_id,
   } = req.body || {};
 
   if (!titulo || !autor) {
@@ -1416,6 +1442,28 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
     novoLivro.descricao = descricao || null;
     novoLivro.imagem = imagem_path;
     novoLivro.isbn = isbn ? String(isbn).replace(/[-\s]/g, "") : null;
+
+    if (editora_id) {
+      const editoraRepo = AppDataSource.getRepository(Editora);
+      const existingEditora = await editoraRepo.findOneBy({ id: parseInt(String(editora_id)) });
+      if (!existingEditora) {
+        return res.status(404).json({ message: "Editora não encontrada" });
+      }
+      novoLivro.editora_id = existingEditora.id;
+    } else {
+      const editoraTrim = String(editora || "").trim();
+      if (editoraTrim) {
+        const editoraRepo = AppDataSource.getRepository(Editora);
+        const existingEditora = await editoraRepo.findOne({ where: { nome: editoraTrim } });
+        if (existingEditora) {
+          novoLivro.editora_id = existingEditora.id;
+        } else {
+          const novaEditora = editoraRepo.create({ nome: editoraTrim, imagem: null });
+          const savedEditora = await editoraRepo.save(novaEditora);
+          novoLivro.editora_id = savedEditora.id;
+        }
+      }
+    }
 
     await AppDataSource.manager.transaction(async (manager) => {
       await manager.save(novoLivro);
@@ -1589,12 +1637,18 @@ readerRouter.get("/autores/:id", async (req: Request, res: Response) => {
       imagem_url: getImageUrl(req, autor.imagem),
       total_livros: stats.total_livros,
       total_leituras: stats.total_leituras,
-      livros: livros.map((b) => ({
-        id: b.id,
-        titulo: b.titulo,
-        autor: b.autor,
-        genero: b.genero,
-        imagem_url: getImageUrl(req, b.imagem),
+      livros: await Promise.all(livros.map(async (b) => {
+        const authorPayload = buildBookAuthorPayload({
+          autor: b.autor,
+          autores: (await getAuthorsForBook(b.id)).map((a) => ({ id: a.id, nome: a.nome })),
+        });
+        return {
+          id: b.id,
+          titulo: b.titulo,
+          autor: authorPayload.autor,
+          genero: b.genero,
+          imagem_url: getImageUrl(req, b.imagem),
+        };
       })),
     });
   } catch (err) {
@@ -1643,12 +1697,18 @@ readerRouter.get("/books/:id", async (req: Request, res: Response) => {
       }
     }
 
+    const authors = await getAuthorsForBook(book.id);
+    const authorPayload = buildBookAuthorPayload({
+      autor: book.autor,
+      autores: authors.map((a) => ({ id: a.id, nome: a.nome })),
+    });
+
     return res.status(200).json({
       id: book.id,
       titulo: book.titulo,
-      autor: book.autor,
+      autor: authorPayload.autor,
       isbn: book.isbn,
-      autores: mapAutoresSummary(await getAuthorsForBook(book.id)),
+      autores: authorPayload.autores,
       preco: book.preco,
       estoque: book.estoque,
       paginas: book.paginas,

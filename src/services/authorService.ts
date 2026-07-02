@@ -27,6 +27,11 @@ export const parseAuthorNames = (autorRaw: string): string[] => {
     .filter(Boolean);
 };
 
+export const buildBookAuthorPayload = (book: { autor?: string | null; autores?: Array<{ id: number; nome: string }> | null }) => ({
+  autor: (book.autores && book.autores.length > 0 ? book.autores.map((a) => a.nome).join(", ") : book.autor) || "Autor desconhecido",
+  autores: (book.autores || []).map((a) => ({ id: a.id, nome: a.nome })),
+});
+
 export const getAllNationalities = async (): Promise<Nacionalidade[]> => {
   return AppDataSource.getRepository(Nacionalidade).find({ order: { nome: "ASC" } });
 };
