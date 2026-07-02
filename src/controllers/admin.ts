@@ -602,12 +602,12 @@ adminRouter.delete("/autores/:id", async (req: AuthRequest, res: Response) => {
 });
 
 adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res: Response) => {
-  const { editora_id, titulo, autor, genero, descricao, open_library_cover_id, paginas, author_nationality } = req.body || {};
+  const { editora_id, titulo, autor, genero, descricao, open_library_cover_id, paginas, author_nationality, autor_id } = req.body || {};
 
   if (!editora_id) {
     return res.status(400).json({ message: "A editora é obrigatória" });
   }
-  if (!titulo || !autor) {
+  if (!titulo || (!autor && !autor_id)) {
     return res.status(400).json({ message: "Título e autor são obrigatórios" });
   }
 
@@ -644,11 +644,22 @@ adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res
       }
     }
 
+    let selectedAuthor: Autor | null = null;
+    let nationalityToSync: string | null = null;
+    if (autor_id) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      selectedAuthor = await autorRepo.findOneBy({ id: parseInt(String(autor_id)) });
+      if (!selectedAuthor) {
+        return res.status(404).json({ message: "Autor não encontrado" });
+      }
+      nationalityToSync = selectedAuthor.nacionalidade || null;
+    }
+
     const novoLivro = new Livro();
     novoLivro.editor_id = null;
     novoLivro.editora_id = editoraInt;
     novoLivro.titulo = titulo;
-    novoLivro.autor = autor;
+    novoLivro.autor = selectedAuthor ? selectedAuthor.nome : String(autor).trim();
     novoLivro.preco = "0.00";
     novoLivro.estoque = 0;
     novoLivro.paginas = paginasInt;
@@ -658,7 +669,12 @@ adminRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, res
     novoLivro.imagem = imagem_path;
 
     await libroRepository.save(novoLivro);
-      await syncAuthorsForBook(novoLivro.id, novoLivro.autor, undefined, author_nationality ? String(author_nationality).trim() : null);
+    await syncAuthorsForBook(
+      novoLivro.id,
+      novoLivro.autor,
+      undefined,
+      nationalityToSync ?? (author_nationality ? String(author_nationality).trim() : null),
+    );
 
     return res.status(201).json({
       message: "Livro cadastrado com sucesso",
@@ -954,6 +970,18 @@ adminRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest, 
 
     const body = req.body || {};
 
+    let selectedAuthor: Autor | null = null;
+    let nationalityToSync: string | null = null;
+    if ("autor_id" in body && body.autor_id) {
+      const autorRepo = AppDataSource.getRepository(Autor);
+      selectedAuthor = await autorRepo.findOneBy({ id: parseInt(String(body.autor_id)) });
+      if (!selectedAuthor) {
+        return res.status(404).json({ message: "Autor não encontrado" });
+      }
+      livro.autor = selectedAuthor.nome;
+      nationalityToSync = selectedAuthor.nacionalidade || null;
+    }
+
     if ("titulo" in body) livro.titulo = body.titulo;
     if ("autor" in body) livro.autor = body.autor;
     if ("genero" in body) livro.genero = body.genero;
@@ -1027,8 +1055,13 @@ adminRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest, 
     }
 
     await libroRepository.save(livro);
-    if ("autor" in body) {
-      await syncAuthorsForBook(livro.id, livro.autor, undefined, body.author_nationality ? String(body.author_nationality).trim() : null);
+    if (selectedAuthor || "autor" in body) {
+      await syncAuthorsForBook(
+        livro.id,
+        livro.autor,
+        undefined,
+        nationalityToSync ?? (body.author_nationality ? String(body.author_nationality).trim() : null),
+      );
     }
 
     return res.status(200).json({ message: "Livro atualizado com sucesso" });
