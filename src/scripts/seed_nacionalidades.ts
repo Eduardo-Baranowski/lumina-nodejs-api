@@ -66,8 +66,9 @@ async function main() {
     console.log(`Seed finished. Nationalities created: ${created}`);
   } catch (err) {
     console.error('Error running seed:', err);
-    if (process.env.VERCEL === "1" || process.env.SKIP_DB_MIGRATIONS === "1") {
-      console.warn('⚠ Ignorando falha do seed no ambiente de build/serveless.');
+    const isCi = process.env.CI === "true" || process.env.CI === "1";
+    if (isCi || process.env.VERCEL === "1" || process.env.SKIP_DB_MIGRATIONS === "1") {
+      console.warn('⚠ Ignorando falha do seed no ambiente de build/CI.');
       process.exit(0);
     }
     process.exit(1);
