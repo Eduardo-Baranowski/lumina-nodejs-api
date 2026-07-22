@@ -1,49 +1,52 @@
 -- Autores rastreáveis + cadastro comunitário de livros
 
 CREATE TABLE IF NOT EXISTS autor (
-  id SERIAL PRIMARY KEY,
+  id INT AUTO_INCREMENT PRIMARY KEY,
   nome VARCHAR(200) NOT NULL,
   slug VARCHAR(220) NOT NULL UNIQUE,
   bio TEXT,
   imagem VARCHAR(255),
   open_library_key VARCHAR(50),
-  criado_em TIMESTAMP DEFAULT NOW()
+  criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS autor_nome_lower_idx ON autor (LOWER(nome));
+CREATE UNIQUE INDEX IF NOT EXISTS autor_nome_lower_idx ON autor (nome);
 
 CREATE TABLE IF NOT EXISTS livro_autor (
-  livro_id INTEGER NOT NULL REFERENCES livro(id) ON DELETE CASCADE,
-  autor_id INTEGER NOT NULL REFERENCES autor(id) ON DELETE CASCADE,
+  livro_id INT NOT NULL,
+  autor_id INT NOT NULL,
   ordem SMALLINT DEFAULT 0,
-  PRIMARY KEY (livro_id, autor_id)
+  PRIMARY KEY (livro_id, autor_id),
+  CONSTRAINT fk_livro_autor_livro FOREIGN KEY (livro_id) REFERENCES livro(id) ON DELETE CASCADE,
+  CONSTRAINT fk_livro_autor_autor FOREIGN KEY (autor_id) REFERENCES autor(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS livro_autor_autor_id_idx ON livro_autor (autor_id);
 
 ALTER TABLE livro ADD COLUMN IF NOT EXISTS isbn VARCHAR(20);
-ALTER TABLE livro ADD COLUMN IF NOT EXISTS submitted_by_id INTEGER REFERENCES "user"(id);
+ALTER TABLE livro ADD COLUMN IF NOT EXISTS submitted_by_id INT;
 ALTER TABLE livro ADD COLUMN IF NOT EXISTS open_library_key VARCHAR(50);
+ALTER TABLE livro ADD CONSTRAINT fk_livro_submitted_by FOREIGN KEY (submitted_by_id) REFERENCES `user`(id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS livro_isbn_unique ON livro (isbn)
-  WHERE isbn IS NOT NULL AND isbn != '';
+CREATE UNIQUE INDEX IF NOT EXISTS livro_isbn_unique ON livro (isbn);
 
 -- Backfill: um autor por string completa em livro.autor (legado)
 INSERT INTO autor (nome, slug)
 SELECT DISTINCT
   l.autor,
-  lower(regexp_replace(l.autor, '[^a-zA-Z0-9]+', '-', 'g'))
-    || '-'
-    || substr(md5(lower(l.autor)), 1, 6)
+  CONCAT(
+    LOWER(REGEXP_REPLACE(l.autor, '[^a-zA-Z0-9]+', '-')),
+    '-',
+    SUBSTR(MD5(LOWER(l.autor)), 1, 6)
+  )
 FROM livro l
 WHERE l.autor IS NOT NULL
-  AND trim(l.autor) != ''
+  AND TRIM(l.autor) != ''
   AND NOT EXISTS (
-    SELECT 1 FROM autor a WHERE lower(a.nome) = lower(l.autor)
+    SELECT 1 FROM autor a WHERE LOWER(a.nome) = LOWER(l.autor)
   );
 
-INSERT INTO livro_autor (livro_id, autor_id, ordem)
+INSERT IGNORE INTO livro_autor (livro_id, autor_id, ordem)
 SELECT l.id, a.id, 0
 FROM livro l
-JOIN autor a ON lower(a.nome) = lower(l.autor)
-ON CONFLICT DO NOTHING;
+JOIN autor a ON LOWER(a.nome) = LOWER(l.autor);

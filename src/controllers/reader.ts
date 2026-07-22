@@ -129,7 +129,7 @@ readerRouter.get("/random-quote", async (req: Request, res: Response) => {
     const frase = await fraseRepo
       .createQueryBuilder("frase")
       .where("frase.ativo = true")
-      .orderBy("RANDOM()")
+      .orderBy("RAND()")
       .getOne();
 
     if (frase) {
@@ -144,7 +144,7 @@ readerRouter.get("/random-quote", async (req: Request, res: Response) => {
       .createQueryBuilder("leitura")
       .leftJoinAndSelect("leitura.livro", "livro")
       .where("leitura.comentario IS NOT NULL AND leitura.comentario != ''")
-      .orderBy("RANDOM()")
+      .orderBy("RAND()")
       .getOne();
 
     if (leitura && leitura.livro) {
@@ -187,7 +187,7 @@ readerRouter.get("/editoras", async (req: Request, res: Response) => {
   try {
     const search = req.query.search ? String(req.query.search).trim() : "";
     const whereClause = search
-      ? [{ nome: require("typeorm").ILike(`%${search}%`) }]
+      ? [{ nome: require("typeorm").Like(`%${search}%`) }]
       : {};
 
     const editoras = await editoraRepo.find({
@@ -1228,13 +1228,13 @@ readerRouter.get("/search", async (req: Request, res: Response) => {
 
   if (q) {
     bookQB.andWhere(
-      "(livro.titulo ILIKE :likeQ OR livro.autor ILIKE :likeQ OR livro.descricao ILIKE :likeQ OR editor.nome ILIKE :likeQ)",
+      "(LOWER(livro.titulo) LIKE LOWER(:likeQ) OR LOWER(livro.autor) LIKE LOWER(:likeQ) OR LOWER(livro.descricao) LIKE LOWER(:likeQ) OR LOWER(editor.nome) LIKE LOWER(:likeQ))",
       { likeQ: `%${q}%` }
     );
   }
 
   if (genero) {
-    bookQB.andWhere("livro.genero ILIKE :genero", { genero });
+    bookQB.andWhere("LOWER(livro.genero) LIKE LOWER(:genero)", { genero });
   }
 
   try {
@@ -1245,14 +1245,14 @@ readerRouter.get("/search", async (req: Request, res: Response) => {
 
     if (q) {
       users = await userRepo.createQueryBuilder("user")
-        .where("user.nome ILIKE :likeQ", { likeQ: `%${q}%` })
+        .where("LOWER(user.nome) LIKE LOWER(:likeQ)", { likeQ: `%${q}%` })
         .andWhere("user.papel != 'editor'")
         .orderBy("user.nome", "ASC")
         .take(limit)
         .getMany();
 
       editors = await userRepo.createQueryBuilder("user")
-        .where("user.nome ILIKE :likeQ", { likeQ: `%${q}%` })
+        .where("LOWER(user.nome) LIKE LOWER(:likeQ)", { likeQ: `%${q}%` })
         .andWhere("user.papel = 'editor'")
         .orderBy("user.nome", "ASC")
         .take(limit)
@@ -1663,7 +1663,7 @@ readerRouter.get("/autores/search", async (req: Request, res: Response) => {
       .take(15);
 
     if (q.length >= 2) {
-      builder.where("autor.nome ILIKE :q", { q: `%${q}%` });
+      builder.where("LOWER(autor.nome) LIKE LOWER(:q)", { q: `%${q}%` });
     }
 
     const autores = await builder.getMany();

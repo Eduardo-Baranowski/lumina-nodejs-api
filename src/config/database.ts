@@ -28,18 +28,30 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 const isProduction = process.env.NODE_ENV === "production";
+const databaseUrl = process.env.DATABASE_URL || "";
+const isPostgres = /^postgres(ql)?:\/\//i.test(databaseUrl);
+const databaseType = isPostgres ? "postgres" : "mysql";
+const postgresSsl = isPostgres && /(?:sslmode=require|sslmode=verify-full|ssl=true)/i.test(databaseUrl);
 
 export const AppDataSource = new DataSource({
-  type: "postgres",
-  url: process.env.DATABASE_URL,
+  type: databaseType as "mysql" | "postgres",
+  url: databaseUrl,
   synchronize: false, // DO NOT sync schema to avoid corrupting/overwriting the database
   logging: false,
-  // SSL obrigatório para Supabase; desabilitado em dev local
-  ssl: isProduction ? { rejectUnauthorized: false } : false,
-  // Em serverless (Vercel), manter pool mínimo para evitar esgotar conexões
-  extra: isProduction
-    ? { max: 2, connectionTimeoutMillis: 10000, idleTimeoutMillis: 30000 }
-    : {},
+  ...(databaseType === "mysql"
+    ? {
+        charset: "utf8mb4",
+      }
+    : {}),
+  extra: {
+    connectionLimit: isProduction ? 2 : 10,
+    connectTimeout: 10000,
+    ...(postgresSsl
+      ? {
+          ssl: { rejectUnauthorized: false },
+        }
+      : {}),
+  },
   entities: [
     User,
     Livro,

@@ -1,9 +1,10 @@
-CREATE TABLE IF NOT EXISTS "editora" (
-  "id" SERIAL PRIMARY KEY,
-  "nome" varchar(100) UNIQUE NOT NULL,
-  "imagem" varchar(255),
-  "criado_em" timestamp NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS editora (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(100) UNIQUE NOT NULL,
+  imagem VARCHAR(255),
+  criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-ALTER TABLE "livro" ADD COLUMN IF NOT EXISTS "editora_id" integer REFERENCES "editora"("id") ON DELETE SET NULL;
-ALTER TABLE "livro" ALTER COLUMN "editor_id" DROP NOT NULL;
+ALTER TABLE livro ADD COLUMN IF NOT EXISTS editora_id INT;
+ALTER TABLE livro ADD CONSTRAINT fk_livro_editora FOREIGN KEY (editora_id) REFERENCES editora(id) ON DELETE SET NULL;
+ALTER TABLE livro MODIFY COLUMN editor_id INT NULL;

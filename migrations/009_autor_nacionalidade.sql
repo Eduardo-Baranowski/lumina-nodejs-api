@@ -1,2 +1,2 @@
 -- Add nacionalidade column to autor
-ALTER TABLE autor ADD COLUMN nacionalidade varchar(100);
+ALTER TABLE autor ADD COLUMN IF NOT EXISTS nacionalidade varchar(100);

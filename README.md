@@ -5,7 +5,7 @@ Backend Node.js do projeto Lumina, responsável por fornecer a API REST para o a
 ## Visão Geral
 
 - **Servidor:** Express
-- **Banco de Dados:** PostgreSQL via TypeORM
+- **Banco de Dados:** MySQL via TypeORM
 - **Autenticação:** JWT
 - **Documentação de API:** Swagger
 
@@ -21,7 +21,7 @@ npm install
 Crie um arquivo `.env` com as variáveis mínimas:
 
 ```env
-DATABASE_URL=postgresql://user:senha@host:5432/banco
+DATABASE_URL=mysql://user:senha@host:3306/banco
 JWT_SECRET=sua_chave_jwt
 ADMIN_INITIAL_EMAIL=admin@example.com
 ADMIN_INITIAL_PASSWORD=SenhaSegura123
@@ -50,7 +50,7 @@ npm test
 
 - Node.js
 - npm
-- PostgreSQL
+- MySQL
 
 ## Observações
 

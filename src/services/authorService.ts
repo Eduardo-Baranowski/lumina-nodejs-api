@@ -4,6 +4,7 @@ import { AppDataSource } from "../config/database";
 import { Autor } from "../entities/Autor";
 import { LivroAutor } from "../entities/LivroAutor";
 import { Livro } from "../entities/Livro";
+import { Leitura } from "../entities/Leitura";
 import { Nacionalidade } from "../entities/Nacionalidade";
 
 export const slugifyAuthorName = (nome: string): string => {
@@ -120,20 +121,28 @@ export const formatAuthorsDisplay = (autores: Autor[]): string => {
 };
 
 export const getAuthorStats = async (autorId: number) => {
-  const result = await AppDataSource.manager.query(
-    `
-    SELECT
-      (SELECT COUNT(*)::int FROM livro_autor la WHERE la.autor_id = $1) AS total_livros,
-      (SELECT COUNT(DISTINCT le.id)::int
-         FROM leitura le
-         JOIN livro_autor la ON la.livro_id = le.livro_id
-        WHERE la.autor_id = $1) AS total_leituras
-    `,
-    [autorId]
-  );
+  const livroAutorRepository = AppDataSource.getRepository(LivroAutor);
+  const leituraRepository = AppDataSource.getRepository(Leitura);
+
+  const bookLinks = await livroAutorRepository.find({
+    where: { autor_id: autorId },
+    select: ["livro_id"],
+  });
+
+  const livroIds = bookLinks.map((link) => link.livro_id);
+  const total_livros = livroIds.length;
+
+  let total_leituras = 0;
+  if (livroIds.length > 0) {
+    total_leituras = await leituraRepository
+      .createQueryBuilder("leitura")
+      .where("leitura.livro_id IN (:...livroIds)", { livroIds })
+      .getCount();
+  }
+
   return {
-    total_livros: result[0]?.total_livros ?? 0,
-    total_leituras: result[0]?.total_leituras ?? 0,
+    total_livros,
+    total_leituras,
   };
 };
 

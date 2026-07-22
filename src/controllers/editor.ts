@@ -132,7 +132,7 @@ editorRouter.get("/books", async (req: AuthRequest, res: Response) => {
 
     if (q) {
       queryBuilder.andWhere(
-        "(livro.titulo ILIKE :q OR livro.autor ILIKE :q)",
+        "(LOWER(livro.titulo) LIKE LOWER(:q) OR LOWER(livro.autor) LIKE LOWER(:q))",
         { q: `%${q}%` }
       );
     }

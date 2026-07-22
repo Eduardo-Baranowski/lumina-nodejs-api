@@ -1,13 +1,13 @@
-CREATE TABLE IF NOT EXISTS "endereco" (
-  "id" SERIAL PRIMARY KEY,
-  "user_id" integer NOT NULL,
-  "label" varchar(255) NOT NULL,
-  "rua" varchar(255) NOT NULL,
-  "numero" varchar(50) NOT NULL,
-  "bairro" varchar(255) NOT NULL,
-  "cidade" varchar(255) NOT NULL,
-  "estado" varchar(100) NOT NULL,
-  "cep" varchar(20) NOT NULL,
-  "criado_em" timestamp NOT NULL DEFAULT now(),
-  CONSTRAINT "fk_endereco_user_id" FOREIGN KEY ("user_id") REFERENCES "user"("id") ON DELETE CASCADE
+CREATE TABLE IF NOT EXISTS endereco (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  label VARCHAR(255) NOT NULL,
+  rua VARCHAR(255) NOT NULL,
+  numero VARCHAR(50) NOT NULL,
+  bairro VARCHAR(255) NOT NULL,
+  cidade VARCHAR(255) NOT NULL,
+  estado VARCHAR(100) NOT NULL,
+  cep VARCHAR(20) NOT NULL,
+  criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_endereco_user_id FOREIGN KEY (user_id) REFERENCES `user`(id) ON DELETE CASCADE
 );
