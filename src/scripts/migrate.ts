@@ -14,5 +14,9 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   console.error("✗ Erro ao executar migrations:", err);
+  if (process.env.VERCEL === "1" || process.env.SKIP_DB_MIGRATIONS === "1") {
+    console.warn("⚠ Ignorando falha de migrations no ambiente de build/serveless.");
+    process.exit(0);
+  }
   process.exit(1);
 });

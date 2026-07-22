@@ -31,7 +31,9 @@ const isProduction = process.env.NODE_ENV === "production";
 const databaseUrl = process.env.DATABASE_URL || "";
 const isPostgres = /^postgres(ql)?:\/\//i.test(databaseUrl);
 const databaseType = isPostgres ? "postgres" : "mysql";
-const postgresSsl = isPostgres && /(?:sslmode=require|sslmode=verify-full|ssl=true)/i.test(databaseUrl);
+const postgresSsl =
+  isPostgres &&
+  (isProduction || /supabase\.co/i.test(databaseUrl) || /(?:sslmode=require|sslmode=verify-full|ssl=true)/i.test(databaseUrl));
 
 export const AppDataSource = new DataSource({
   type: databaseType as "mysql" | "postgres",
