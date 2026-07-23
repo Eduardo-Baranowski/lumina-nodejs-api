@@ -25,6 +25,13 @@ export const getCoverUrl = (coverId: number | null, size = "M"): string | null =
   return OPEN_LIBRARY_COVER.replace("{cover_id}", String(coverId)).replace("{size}", size);
 };
 
+export const getIsbnCoverUrl = (isbn: string | null, size = "M"): string | null => {
+  if (!isbn) return null;
+  const normalized = String(isbn).trim().replace(/[^0-9Xx]/g, "");
+  if (!normalized) return null;
+  return `https://covers.openlibrary.org/b/isbn/${normalized}-${size}.jpg`;
+};
+
 export const mapGenre = (subjects: string[] | null): string | null => {
   if (!subjects || subjects.length === 0) return null;
   const haystack = subjects.join(" ").toLowerCase();
@@ -415,13 +422,10 @@ const searchBooksOpenLibrary = async (query: string, limit = 8): Promise<any[]> 
   throw lastErr;
 };
 
-export const downloadCoverToUploads = async (
-  coverId: number,
+const downloadUrlToUploads = async (
+  url: string,
   uploadFolder: string
 ): Promise<string | null> => {
-  const url = getCoverUrl(coverId, "L");
-  if (!url) return null;
-
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);
 
@@ -451,6 +455,54 @@ export const downloadCoverToUploads = async (
   } catch (err) {
     clearTimeout(timeoutId);
     console.error("Error downloading book cover:", err);
+    return null;
+  }
+};
+
+export const downloadCoverToUploads = async (
+  coverId: number,
+  uploadFolder: string
+): Promise<string | null> => {
+  const url = getCoverUrl(coverId, "L");
+  if (!url) return null;
+  return downloadUrlToUploads(url, uploadFolder);
+};
+
+export const downloadCoverByIsbnToUploads = async (
+  isbn: string,
+  uploadFolder: string
+): Promise<string | null> => {
+  const url = getIsbnCoverUrl(isbn, "L");
+  if (!url) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) return null;
+
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length < 500) {
+      return null;
+    }
+
+    const booksDir = path.join(uploadFolder, "books");
+    fs.mkdirSync(booksDir, { recursive: true });
+
+    const filename = `${uuidv4().replace(/-/g, "")}.jpg`;
+    const targetPath = path.join(booksDir, filename);
+
+    fs.writeFileSync(targetPath, buffer);
+
+    return path.join("books", filename);
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.error("Error downloading book cover by ISBN:", err);
     return null;
   }
 };

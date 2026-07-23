@@ -15,7 +15,7 @@ import { Endereco } from "../entities/Endereco";
 import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
-import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
+import { searchBooks, downloadCoverToUploads, downloadCoverByIsbnToUploads } from "../services/bookLookup";
 import {
   syncAuthorsForBook,
   getAuthorsForBook,
@@ -1461,6 +1461,11 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
       }
     }
 
+    if (!imagem_path && isbn) {
+      const uploadRoot = path.join(__dirname, "../../static/uploads");
+      imagem_path = await downloadCoverByIsbnToUploads(String(isbn), uploadRoot);
+    }
+
     const novoLivro = new Livro();
     novoLivro.submitted_by_id = userId;
     novoLivro.titulo = String(titulo).trim();
@@ -1608,6 +1613,15 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
           if (livro.imagem) {
             deleteImage(livro.imagem);
           }
+          livro.imagem = newPath;
+        }
+      }
+    } else if (!livro.imagem) {
+      const isbnCandidate = body.isbn ? String(body.isbn).trim() : livro.isbn;
+      if (isbnCandidate) {
+        const uploadRoot = path.join(__dirname, "../../static/uploads");
+        const newPath = await downloadCoverByIsbnToUploads(isbnCandidate, uploadRoot);
+        if (newPath) {
           livro.imagem = newPath;
         }
       }
