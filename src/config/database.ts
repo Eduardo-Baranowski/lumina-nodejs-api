@@ -34,6 +34,7 @@ const databaseType = isPostgres ? "postgres" : "mysql";
 const postgresSsl =
   isPostgres &&
   (isProduction || /supabase\.co/i.test(databaseUrl) || /(?:sslmode=require|sslmode=verify-full|ssl=true)/i.test(databaseUrl));
+const requiresTls = /tidbcloud\.com|tidb|amazonaws\.com/i.test(databaseUrl) || /ssl=true/i.test(databaseUrl);
 
 export const AppDataSource = new DataSource({
   type: databaseType as "mysql" | "postgres",
@@ -48,9 +49,16 @@ export const AppDataSource = new DataSource({
   extra: {
     connectionLimit: isProduction ? 2 : 10,
     connectTimeout: 10000,
-    ...(postgresSsl
+    ...(databaseType === "postgres" && postgresSsl
       ? {
           ssl: { rejectUnauthorized: false },
+        }
+      : {}),
+    ...(databaseType === "mysql" && requiresTls
+      ? {
+          ssl: {
+            rejectUnauthorized: false,
+          },
         }
       : {}),
   },
