@@ -93,11 +93,15 @@ async function ensureBaseSchema(): Promise<void> {
 function isIgnorableMigrationError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
 
-  const castErr = err as { code?: string; errno?: number };
+  const castErr = err as { code?: string; errno?: number; sqlMessage?: string; message?: string };
   const duplicateIndex = castErr.code === "ER_DUP_KEYNAME" || castErr.errno === 1061;
   const duplicateForeignKey = castErr.code === "ER_FK_DUP_NAME" || castErr.errno === 1826;
   const duplicateColumn = castErr.code === "ER_DUP_FIELDNAME" || castErr.errno === 1060;
-  return duplicateIndex || duplicateForeignKey || duplicateColumn;
+  const createDenied = castErr.code === "ER_DBACCESS_DENIED_ERROR" || castErr.code === "ER_TABLEACCESS_DENIED_ERROR" || castErr.code === "ER_PARSE_ERROR";
+  const createDeniedMessage = /create command denied|access denied|denied to user|command denied/i.test(
+    `${castErr.sqlMessage || ""} ${castErr.message || ""}`
+  );
+  return duplicateIndex || duplicateForeignKey || duplicateColumn || createDenied || createDeniedMessage;
 }
 
 async function getAppliedMigrations(): Promise<Set<string>> {
@@ -108,8 +112,25 @@ async function getAppliedMigrations(): Promise<Set<string>> {
 }
 
 export async function runMigrations(): Promise<void> {
-  await AppDataSource.query(MIGRATIONS_TABLE);
-  await ensureBaseSchema();
+  try {
+    await AppDataSource.query(MIGRATIONS_TABLE);
+  } catch (error: unknown) {
+    if (isIgnorableMigrationError(error)) {
+      console.warn("⚠ Não foi possível criar a tabela schema_migrations; pulando fluxo de migrations automáticas.");
+      return;
+    }
+    throw error;
+  }
+
+  try {
+    await ensureBaseSchema();
+  } catch (error: unknown) {
+    if (isIgnorableMigrationError(error)) {
+      console.warn("⚠ Não foi possível criar o schema base; pulando fluxo de migrations automáticas.");
+      return;
+    }
+    throw error;
+  }
 
   if (isPostgres) {
     console.log("▶ PostgreSQL detectado; pulando migrations SQL manuais e usando o schema do TypeORM.");

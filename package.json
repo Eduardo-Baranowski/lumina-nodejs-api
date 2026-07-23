@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "migrate": "ts-node src/scripts/migrate.ts",
-    "vercel-build": "tsc && ts-node src/scripts/migrate.ts && ts-node src/scripts/seed_nacionalidades.ts",
+    "vercel-build": "tsc",
     "seed:nacionalidades": "ts-node src/scripts/seed_nacionalidades.ts",
     "test": "cross-env NODE_ENV=test jest --runInBand",
     "test:watch": "cross-env NODE_ENV=test jest --watch --runInBand",
