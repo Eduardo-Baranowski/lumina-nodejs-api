@@ -7,6 +7,7 @@ import { Autor } from "../entities/Autor";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
 import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
 import { searchBooks, downloadCoverToUploads } from "../services/bookLookup";
+import { UPLOAD_ROOT } from "../utils/image";
 import { syncAuthorsForBook, nationalityExists } from "../services/authorService";
 import multer from "multer";
 import * as path from "path";
@@ -207,8 +208,7 @@ editorRouter.post("/books", upload.single("imagem"), async (req: AuthRequest, re
     } else if (open_library_cover_id) {
       const coverIdInt = parseInt(open_library_cover_id);
       if (!isNaN(coverIdInt)) {
-        const uploadRoot = path.join(__dirname, "../../static/uploads");
-        imagem_path = await downloadCoverToUploads(coverIdInt, uploadRoot);
+        imagem_path = await downloadCoverToUploads(coverIdInt, UPLOAD_ROOT);
       }
     }
 
@@ -304,8 +304,7 @@ editorRouter.put("/books/:id", upload.single("imagem"), async (req: AuthRequest,
     } else if (body.open_library_cover_id) {
       const coverIdInt = parseInt(body.open_library_cover_id);
       if (!isNaN(coverIdInt)) {
-        const uploadRoot = path.join(__dirname, "../../static/uploads");
-        const newPath = await downloadCoverToUploads(coverIdInt, uploadRoot);
+        const newPath = await downloadCoverToUploads(coverIdInt, UPLOAD_ROOT);
         if (newPath) {
           if (livro.imagem) {
             deleteImage(livro.imagem);

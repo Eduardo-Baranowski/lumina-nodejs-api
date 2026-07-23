@@ -14,7 +14,7 @@ import { FeedComment } from "../entities/FeedComment";
 import { Endereco } from "../entities/Endereco";
 import { Request as SystemRequest } from "../entities/Request";
 import { AuthRequest, authMiddleware, requireRole } from "../middlewares/auth";
-import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE } from "../utils/image";
+import { getImageUrl, saveImage, deleteImage, UNSUPPORTED_IMAGE_MESSAGE, UPLOAD_ROOT } from "../utils/image";
 import { searchBooks, downloadCoverToUploads, downloadCoverByIsbnToUploads } from "../services/bookLookup";
 import {
   syncAuthorsForBook,
@@ -1456,14 +1456,12 @@ readerRouter.post("/books", authMiddleware(), upload.single("imagem"), async (re
     } else if (open_library_cover_id) {
       const coverIdInt = parseInt(open_library_cover_id);
       if (!isNaN(coverIdInt)) {
-        const uploadRoot = path.join(__dirname, "../../static/uploads");
-        imagem_path = await downloadCoverToUploads(coverIdInt, uploadRoot);
+        imagem_path = await downloadCoverToUploads(coverIdInt, UPLOAD_ROOT);
       }
     }
 
     if (!imagem_path && isbn) {
-      const uploadRoot = path.join(__dirname, "../../static/uploads");
-      imagem_path = await downloadCoverByIsbnToUploads(String(isbn), uploadRoot);
+      imagem_path = await downloadCoverByIsbnToUploads(String(isbn), UPLOAD_ROOT);
     }
 
     const novoLivro = new Livro();
@@ -1607,8 +1605,7 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
     } else if (body.open_library_cover_id) {
       const coverIdInt = parseInt(body.open_library_cover_id);
       if (!isNaN(coverIdInt)) {
-        const uploadRoot = path.join(__dirname, "../../static/uploads");
-        const newPath = await downloadCoverToUploads(coverIdInt, uploadRoot);
+        const newPath = await downloadCoverToUploads(coverIdInt, UPLOAD_ROOT);
         if (newPath) {
           if (livro.imagem) {
             deleteImage(livro.imagem);
@@ -1619,8 +1616,7 @@ readerRouter.put("/books/:id", authMiddleware(), upload.single("imagem"), async 
     } else if (!livro.imagem) {
       const isbnCandidate = body.isbn ? String(body.isbn).trim() : livro.isbn;
       if (isbnCandidate) {
-        const uploadRoot = path.join(__dirname, "../../static/uploads");
-        const newPath = await downloadCoverByIsbnToUploads(isbnCandidate, uploadRoot);
+        const newPath = await downloadCoverByIsbnToUploads(isbnCandidate, UPLOAD_ROOT);
         if (newPath) {
           livro.imagem = newPath;
         }

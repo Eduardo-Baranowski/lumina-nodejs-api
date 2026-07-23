@@ -43,7 +43,7 @@ if (isCloudinaryEnabled) {
   });
 }
 
-const UPLOAD_ROOT = isServerless
+export const UPLOAD_ROOT = isServerless
   ? "/tmp/uploads"
   : path.join(__dirname, "../../static/uploads");
 
