@@ -30,6 +30,20 @@ export function resolveImageExtension(file: Express.Multer.File): string | null 
   return null;
 }
 
+const resolveBufferImageExtension = (originalname: string, mimetype?: string): string | null => {
+  const fromName = path.extname(originalname).toLowerCase().replace(".", "");
+  if (ALLOWED_EXTENSIONS.includes(fromName)) {
+    return fromName === "jpeg" ? "jpg" : fromName;
+  }
+
+  if (mimetype) {
+    const fromMime = MIME_TO_EXT[mimetype.toLowerCase()];
+    if (fromMime) return fromMime;
+  }
+
+  return null;
+};
+
 // Use /tmp em serverless (Vercel), caso contrário use static/uploads local
 const isServerless = process.env.VERCEL === "1" || process.env.NODE_ENV === "production";
 const isCloudinaryEnabled = isServerless && process.env.CLOUDINARY_CLOUD_NAME;
@@ -96,44 +110,58 @@ export const saveImage = async (
     return null;
   }
 
+  return await saveBufferImage(file.buffer, file.originalname, file.mimetype, subfolder, UPLOAD_ROOT);
+};
+
+export const saveBufferImage = async (
+  buffer: Buffer,
+  originalname: string,
+  mimetype: string | undefined,
+  subfolder: string,
+  uploadFolder: string
+): Promise<string | null> => {
+  const ext = resolveBufferImageExtension(originalname, mimetype);
+  if (!ext) {
+    console.warn(`Rejected image buffer: name=${originalname} mime=${mimetype}`);
+    return null;
+  }
+
   try {
-    // Se Cloudinary está disponível em produção, usar ele
     if (isCloudinaryEnabled) {
       return new Promise((resolve, reject) => {
+        const publicId = uuidv4().replace(/-/g, "");
         const stream = cloudinary.uploader.upload_stream(
           {
             folder: `lumina/${subfolder}`,
             resource_type: "auto",
+            public_id: publicId,
           },
           (error, result) => {
             if (error) {
               console.error("Cloudinary upload error:", error);
               reject(error);
             } else if (result) {
-              // Retornar URL completa da imagem no Cloudinary
               console.log(`✓ Image uploaded to Cloudinary: ${result.secure_url}`);
               resolve(result.secure_url);
             }
           }
         );
-        stream.end(file.buffer);
+        stream.end(buffer);
       });
     }
 
-    // Fallback: usar filesystem local (dev ou se Cloudinary não estiver configurado)
     const uniqueFilename = `${uuidv4().replace(/-/g, "")}.${ext}`;
-    const targetDir = path.join(UPLOAD_ROOT, subfolder);
-
+    const targetDir = path.join(uploadFolder, subfolder);
     fs.mkdirSync(targetDir, { recursive: true });
 
     const targetPath = path.join(targetDir, uniqueFilename);
-    fs.writeFileSync(targetPath, file.buffer);
+    fs.writeFileSync(targetPath, buffer);
 
     const relPath = subfolder ? path.join(subfolder, uniqueFilename) : uniqueFilename;
     console.log(`✓ Image saved locally: ${relPath}`);
     return relPath;
   } catch (err) {
-    console.error(`Error saving image: ${err}`);
+    console.error(`Error saving image buffer: ${err}`);
     throw err;
   }
 };

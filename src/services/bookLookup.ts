@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { saveBufferImage } from "../utils/image";
 import { v4 as uuidv4 } from "uuid";
 
 const ISBN_API_BASE = "https://api.isbn.gov.br/books";
@@ -45,24 +46,17 @@ export const mapGenre = (subjects: string[] | null): string | null => {
 
 const getFirstSentence = (doc: any): string | null => {
   const raw = doc.first_sentence;
-  if (Array.isArray(raw) && raw.length > 0) {
-    return String(raw[0]).trim();
-  }
-  if (typeof raw === "string" && raw.trim()) {
-    return raw.trim();
-  }
+  if (Array.isArray(raw) && raw.length > 0) return String(raw[0]).trim();
+  if (typeof raw === "string" && raw.trim().length > 0) return raw.trim();
   return null;
 };
 
 const parsePageCount = (value: any): number | null => {
-  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
-    return Math.floor(value);
-  }
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
-    const digits = value.replace(/[^0-9]/g, "");
-    if (!digits) return null;
-    const parsed = parseInt(digits, 10);
-    return Number.isNaN(parsed) ? null : parsed;
+    const m = value.match(/\d+/);
+    if (m) return parseInt(m[0], 10);
   }
   return null;
 };
@@ -439,19 +433,15 @@ const downloadUrlToUploads = async (
 
     const buffer = Buffer.from(await response.arrayBuffer());
     // Open Library returns small placeholders for missing covers (often < 500 bytes)
-    if (buffer.length < 500) {
-      return null;
-    }
+    if (buffer.length < 500) return null;
 
-    const booksDir = path.join(uploadFolder, "books");
-    fs.mkdirSync(booksDir, { recursive: true });
-
-    const filename = `${uuidv4().replace(/-/g, "")}.jpg`;
-    const targetPath = path.join(booksDir, filename);
-
-    fs.writeFileSync(targetPath, buffer);
-
-    return path.join("books", filename);
+    return await saveBufferImage(
+      buffer,
+      "cover.jpg",
+      response.headers.get("content-type") ?? "image/jpeg",
+      "books",
+      uploadFolder
+    );
   } catch (err) {
     clearTimeout(timeoutId);
     console.error("Error downloading book cover:", err);
@@ -485,21 +475,12 @@ export const downloadCoverByIsbnToUploads = async (
     clearTimeout(timeoutId);
 
     if (!response.ok) return null;
-
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.length < 500) {
       return null;
     }
 
-    const booksDir = path.join(uploadFolder, "books");
-    fs.mkdirSync(booksDir, { recursive: true });
-
-    const filename = `${uuidv4().replace(/-/g, "")}.jpg`;
-    const targetPath = path.join(booksDir, filename);
-
-    fs.writeFileSync(targetPath, buffer);
-
-    return path.join("books", filename);
+    return await saveBufferImage(buffer, "cover.jpg", response.headers.get("content-type") ?? "image/jpeg", "books", uploadFolder);
   } catch (err) {
     clearTimeout(timeoutId);
     console.error("Error downloading book cover by ISBN:", err);
