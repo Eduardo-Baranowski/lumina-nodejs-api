@@ -3,6 +3,7 @@ import * as path from "path";
 import { v4 as uuidv4 } from "uuid";
 
 const ISBN_API_BASE = "https://api.isbn.gov.br/books";
+const OPEN_LIBRARY_BASE = "https://openlibrary.org";
 const OPEN_LIBRARY_SEARCH = "https://openlibrary.org/search.json";
 const OPEN_LIBRARY_COVER = "https://covers.openlibrary.org/b/id/{cover_id}-{size}.jpg";
 
@@ -46,6 +47,122 @@ const getFirstSentence = (doc: any): string | null => {
   return null;
 };
 
+const parsePageCount = (value: any): number | null => {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string") {
+    const digits = value.replace(/[^0-9]/g, "");
+    if (!digits) return null;
+    const parsed = parseInt(digits, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
+};
+
+const getPageCountFromBookData = (book: any): number | null => {
+  const candidates = [
+    book.pages,
+    book.number_of_pages,
+    book.page_count,
+    book.number_of_pages_median,
+  ];
+
+  for (const candidate of candidates) {
+    const pages = parsePageCount(candidate);
+    if (pages && pages > 0) return pages;
+  }
+
+  const pagination = book.pagination;
+  if (typeof pagination === "string") {
+    const matches = pagination.match(/\d+/g);
+    if (matches && matches.length > 0) {
+      const lastNumber = parseInt(matches[matches.length - 1], 10);
+      if (!Number.isNaN(lastNumber) && lastNumber > 0) {
+        return lastNumber;
+      }
+    }
+  }
+
+  return null;
+};
+
+const fetchOpenLibraryJson = async (urlOrPath: string, timeoutMs = 10000): Promise<any | null> => {
+  const url = urlOrPath.startsWith("http") ? urlOrPath : `${OPEN_LIBRARY_BASE}${urlOrPath}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return await response.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    return null;
+  }
+};
+
+const getIsbnFromEditionData = (edition: any): string | null => {
+  const isbn13 = Array.isArray(edition.isbn_13) ? edition.isbn_13 : [];
+  const isbn10 = Array.isArray(edition.isbn_10) ? edition.isbn_10 : [];
+  const candidates = [...isbn13, ...isbn10].map((value) => String(value).trim()).filter((value) => value.length > 0);
+  return candidates.length > 0 ? candidates[0] : null;
+};
+
+const enrichOpenLibraryDoc = async (doc: any): Promise<any> => {
+  if (Array.isArray(doc.isbn) && doc.isbn.length > 0) {
+    return doc;
+  }
+
+  const editionKeys = Array.isArray(doc.edition_key) ? doc.edition_key : [];
+  if (editionKeys.length === 0) {
+    return doc;
+  }
+
+  const editionKey = String(editionKeys[0]).trim();
+  if (!editionKey) {
+    return doc;
+  }
+
+  const edition = await fetchOpenLibraryJson(`/books/${editionKey}.json`, 10000);
+  if (!edition) {
+    return doc;
+  }
+
+  const isbn = getIsbnFromEditionData(edition);
+  if (isbn) {
+    doc.isbn = [isbn];
+  }
+
+  if (!doc.publisher && edition.publishers) {
+    doc.publisher = Array.isArray(edition.publishers) ? String(edition.publishers[0]) : String(edition.publishers);
+  }
+
+  if (!doc.first_publish_year && typeof edition.publish_date === "string") {
+    const year = Number(edition.publish_date.match(/\d{4}/)?.[0]);
+    if (!Number.isNaN(year)) {
+      doc.first_publish_year = year;
+    }
+  }
+
+  if (!doc.number_of_pages && edition.number_of_pages) {
+    doc.number_of_pages = edition.number_of_pages;
+  }
+  if (!doc.number_of_pages_median && edition.number_of_pages_median) {
+    doc.number_of_pages_median = edition.number_of_pages_median;
+  }
+  if (!doc.pagination && edition.pagination) {
+    doc.pagination = edition.pagination;
+  }
+
+  return doc;
+};
+
 // ─── ISBN Brasil API (Official Brazilian Government API) ─────────────────
 // Source: https://www.isbn.gov.br/website/consulta-api
 // Note: This is the official Brazilian government API maintained by Fundação Biblioteca Nacional
@@ -64,6 +181,7 @@ const normalizeIsbnResult = (book: any): any | null => {
   const editora = book.publisher?.name || book.publisher || null;
   const isbn = book.isbn || null;
   const ano = book.publish_date ? new Date(book.publish_date).getFullYear() : null;
+  const paginas = getPageCountFromBookData(book);
 
   // ISBN API pode ter cover em diferentes formatos
   let imagemUrl: string | null = null;
@@ -82,6 +200,7 @@ const normalizeIsbnResult = (book: any): any | null => {
     genero: book.category ? mapGenre([book.category]) : null,
     ano,
     isbn,
+    paginas,
     imagem_url: imagemUrl,
     fonte: "isbn_brasil",
     cover_id: null, // ISBN API não usa cover_id como Open Library
@@ -166,11 +285,18 @@ const normalizeDoc = (doc: any): any | null => {
 
   const isbnList = doc.isbn || [];
   const isbn = isbnList.length > 0 ? String(isbnList[0]) : null;
+  const paginas = getPageCountFromBookData(doc);
 
   // Extract publisher info from Open Library if available
-  const editora = doc.publisher && Array.isArray(doc.publisher) 
-    ? doc.publisher[0] 
+  const editora = doc.publisher && Array.isArray(doc.publisher)
+    ? doc.publisher[0]
     : doc.publisher || null;
+
+  const coverUrl = coverId
+    ? getCoverUrl(parseInt(coverId))
+    : isbn
+    ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg`
+    : null;
 
   return {
     titulo: title,
@@ -180,8 +306,9 @@ const normalizeDoc = (doc: any): any | null => {
     genero: mapGenre(subjects),
     ano: doc.first_publish_year,
     isbn: isbn,
+    paginas,
     cover_id: coverId ? parseInt(coverId) : null,
-    imagem_url: coverId ? getCoverUrl(parseInt(coverId)) : null,
+    imagem_url: coverUrl,
     fonte: "open_library",
     open_library_key: doc.key,
   };
@@ -230,7 +357,7 @@ const searchBooksOpenLibrary = async (query: string, limit = 8): Promise<any[]> 
   url.searchParams.append("limit", String(maxLimit));
   url.searchParams.append(
     "fields",
-    "key,title,author_name,first_publish_year,cover_i,subject,isbn,first_sentence"
+    "key,title,author_name,first_publish_year,cover_i,subject,isbn,first_sentence,edition_key,publisher,number_of_pages,number_of_pages_median,pagination"
   );
 
   const MAX_ATTEMPTS = 2;
@@ -258,7 +385,8 @@ const searchBooksOpenLibrary = async (query: string, limit = 8): Promise<any[]> 
       const seen = new Set<string>();
 
       for (const doc of docs) {
-        const item = normalizeDoc(doc);
+        const enrichedDoc = await enrichOpenLibraryDoc(doc);
+        const item = await normalizeDoc(enrichedDoc);
         if (!item) continue;
 
         const key = `${item.titulo.toLowerCase()}|||${item.autor.toLowerCase()}`;
