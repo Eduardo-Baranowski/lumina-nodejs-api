@@ -563,6 +563,8 @@ readerRouter.get("/users/:id/visit", async (req: Request, res: Response) => {
   const userId = parseInt(req.params.id);
   const userRepo = AppDataSource.getRepository(User);
   const libroRepo = AppDataSource.getRepository(Livro);
+  const forSaleParam = String(req.query.for_sale || req.query.forSale || "").toLowerCase();
+  const forSale = forSaleParam === '1' || forSaleParam === 'true';
   const lecturaRepo = AppDataSource.getRepository(Leitura);
   const requestRepo = AppDataSource.getRepository(SystemRequest);
   const compraRepo = AppDataSource.getRepository(Compra);
@@ -1166,6 +1168,9 @@ readerRouter.get("/books", async (req: Request, res: Response) => {
   const genero = String(req.query.genero || "");
   const condicao = String(req.query.condicao || "");
 
+  const forSaleParam = String(req.query.for_sale || req.query.forSale || "").toLowerCase();
+  const forSale = forSaleParam === '1' || forSaleParam === 'true';
+
   const libroRepo = AppDataSource.getRepository(Livro);
 
   try {
@@ -1178,6 +1183,12 @@ readerRouter.get("/books", async (req: Request, res: Response) => {
 
     if (condicao) {
       queryBuilder.andWhere("livro.condicao = :condicao", { condicao });
+    }
+
+    if (forSale) {
+      // filtrar livros com preço numérico maior que zero
+      // usa CAST para funcionar em MySQL/Postgres (DECIMAL/NUMERIC)
+      queryBuilder.andWhere("CAST(livro.preco AS DECIMAL) > 0");
     }
 
     const total = await queryBuilder.getCount();
