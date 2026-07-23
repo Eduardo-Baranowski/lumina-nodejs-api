@@ -29,12 +29,36 @@ dotenv.config();
 
 const isProduction = process.env.NODE_ENV === "production";
 const databaseUrl = process.env.DATABASE_URL || "";
+
+if (!databaseUrl) {
+  throw new Error(
+    "DATABASE_URL não definido. Defina um valor em .env ou nas variáveis de ambiente do deploy."
+  );
+}
+
+const databaseUrlObject = new URL(databaseUrl);
+const databaseName = databaseUrlObject.pathname.replace(/^\//, "");
 const isPostgres = /^postgres(ql)?:\/\//i.test(databaseUrl);
 const databaseType = isPostgres ? "postgres" : "mysql";
+const reservedSqlDatabases = ["sys", "mysql", "information_schema", "performance_schema"];
+
+if (!databaseName) {
+  throw new Error(
+    "DATABASE_URL deve incluir o nome do banco de dados. Exemplo: mysql://user:pass@host:3306/meubanco"
+  );
+}
+
+if (!isPostgres && reservedSqlDatabases.includes(databaseName.toLowerCase())) {
+  throw new Error(
+    `DATABASE_URL está apontando para o schema reservado '${databaseName}'. Use um banco de aplicação válido, não 'sys' ou outro schema do sistema.`
+  );
+}
+
 const postgresSsl =
   isPostgres &&
   (isProduction || /supabase\.co/i.test(databaseUrl) || /(?:sslmode=require|sslmode=verify-full|ssl=true)/i.test(databaseUrl));
-const requiresTls = /tidbcloud\.com|tidb|amazonaws\.com/i.test(databaseUrl) || /ssl=true/i.test(databaseUrl);
+const requiresTls =
+  /tidbcloud\.com|tidb|amazonaws\.com/i.test(databaseUrl) || /ssl=true/i.test(databaseUrl);
 
 export const AppDataSource = new DataSource({
   type: databaseType as "mysql" | "postgres",
