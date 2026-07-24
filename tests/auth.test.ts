@@ -107,4 +107,81 @@ describe("Auth routes", () => {
     expect(res.status).toBe(401);
     expect(res.body.message).toBe("Credenciais inválidas");
   });
+
+  it("deve criar um token de reset de senha quando o email existir", async () => {
+    const existingUser = new User();
+    existingUser.id = 1;
+    existingUser.email = "teste@example.com";
+
+    const repo = {
+      findOneBy: jest.fn().mockResolvedValue(existingUser),
+    };
+    mockedGetRepository.mockReturnValue(repo);
+
+    const res = await request(app)
+      .post("/auth/password-reset/request")
+      .send({ email: "teste@example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe(
+      "Se este e-mail estiver cadastrado, você receberá instruções para resetar a senha."
+    );
+    expect(res.body.token).toBeTruthy();
+  });
+
+  it("deve retornar 200 mesmo quando o email não existir no request de reset", async () => {
+    const repo = {
+      findOneBy: jest.fn().mockResolvedValue(null),
+    };
+    mockedGetRepository.mockReturnValue(repo);
+
+    const res = await request(app)
+      .post("/auth/password-reset/request")
+      .send({ email: "naoexiste@example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe(
+      "Se este e-mail estiver cadastrado, você receberá instruções para resetar a senha."
+    );
+    expect(res.body.token).toBeNull();
+  });
+
+  it("deve confirmar o reset de senha com token válido", async () => {
+    const senhaHash = bcrypt.hashSync("senha-antiga", bcrypt.genSaltSync(10));
+    const existingUser = new User();
+    existingUser.id = 1;
+    existingUser.email = "teste@example.com";
+    existingUser.senha_hash = senhaHash;
+    existingUser.papel = "leitor";
+
+    const repo = {
+      findOneBy: jest.fn().mockResolvedValue(existingUser),
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    mockedGetRepository.mockReturnValue(repo);
+
+    const tokenRes = await request(app)
+      .post("/auth/password-reset/request")
+      .send({ email: "teste@example.com" });
+
+    const token = tokenRes.body.token;
+    expect(token).toBeTruthy();
+
+    const res = await request(app)
+      .post("/auth/password-reset/confirm")
+      .send({ token, nova_senha: "senhaNova123" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe("Senha alterada com sucesso");
+    expect(repo.save).toHaveBeenCalled();
+  });
+
+  it("deve falhar se o token de reset for inválido", async () => {
+    const res = await request(app)
+      .post("/auth/password-reset/confirm")
+      .send({ token: "token-invalido", nova_senha: "senhaNova123" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe("Token de reset inválido ou expirado");
+  });
 });
