@@ -4,6 +4,7 @@ import { User } from "../entities/User";
 import * as bcrypt from "bcryptjs";
 import * as jwt from "jsonwebtoken";
 import { getImageUrl } from "../utils/image";
+import { isPasswordResetEmailEnabled, sendPasswordResetEmail } from "../utils/email";
 
 const PASSWORD_RESET_TOKEN_EXPIRATION = process.env.PASSWORD_RESET_TOKEN_EXPIRATION || "1h";
 const PASSWORD_RESET_EMAIL_ENABLED = process.env.PASSWORD_RESET_EMAIL_ENABLED === "1";
@@ -89,16 +90,23 @@ authRouter.post("/password-reset/request", async (req: Request, res: Response) =
       ? `${process.env.BASE_URL || `http://localhost:${process.env.PORT || "5000"}`}/reset-password?token=${token}`
       : null;
 
-    if (PASSWORD_RESET_EMAIL_ENABLED) {
-      // TODO: enviar token por e-mail quando provedor de e-mail estiver configurado.
-      // Neste momento, o token é retornado na resposta para permitir uso direto da API.
+    if (user && token && isPasswordResetEmailEnabled()) {
+      try {
+        await sendPasswordResetEmail(user.email, token);
+      } catch (emailError) {
+        console.error("Failed to send password reset email:", emailError);
+        // Não falhar a requisição para não vazar se o email estiver correto.
+      }
     }
 
     return res.status(200).json({
       message:
         "Se este e-mail estiver cadastrado, você receberá instruções para resetar a senha.",
-      token,
-      reset_url: resetUrl,
+      // token e reset_url são incluídos apenas para debug/dev.
+      // Em produção, não exponha esses valores.
+      token: process.env.NODE_ENV !== "production" ? token : undefined,
+      reset_url:
+        process.env.NODE_ENV !== "production" ? resetUrl : undefined,
     });
   } catch (err) {
     console.error("Error during password reset request:", err);
